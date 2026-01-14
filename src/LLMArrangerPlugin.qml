@@ -5,24 +5,70 @@ import MuseScore 3.0
 
 MuseScore {
     id: plugin
-    version: "1.0.0"
+    version: "1.1.0"
     description: "Use natural language to describe arrangement changes to your score"
     menuPath: "Plugins.LLM Arranger"
     pluginType: "dialog"
     requiresScore: false
 
-    width: 600
-    height: 500
+    width: 620
+    height: 580
 
-    // Configuration properties - stored in properties (no persistent storage without Qt.labs)
-    property string apiEndpoint: "http://localhost:11434/api/generate"
+    // Provider configurations
+    property var providers: [
+        {
+            name: "Claude (Anthropic)",
+            endpoint: "https://api.anthropic.com/v1/messages",
+            model: "claude-sonnet-4-20250514",
+            needsKey: true
+        },
+        {
+            name: "Gemini (Google)",
+            endpoint: "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+            model: "gemini-1.5-flash",
+            needsKey: true
+        },
+        {
+            name: "OpenAI",
+            endpoint: "https://api.openai.com/v1/chat/completions",
+            model: "gpt-4o",
+            needsKey: true
+        },
+        {
+            name: "Ollama (Local)",
+            endpoint: "http://localhost:11434/api/generate",
+            model: "llama3",
+            needsKey: false
+        }
+    ]
+
+    // Current configuration
+    property int currentProvider: 0
     property string apiKey: ""
-    property string modelName: "llama3"
-    property bool useOpenAI: false
+    property string customModel: ""
 
     // State
     property bool isProcessing: false
     property var pendingActions: []
+
+    // Get current provider config
+    function getProvider() {
+        return providers[currentProvider]
+    }
+
+    function getModel() {
+        return customModel.length > 0 ? customModel : getProvider().model
+    }
+
+    function getEndpoint() {
+        var endpoint = getProvider().endpoint
+        // For Gemini, replace {model} placeholder
+        if (currentProvider === 1) {
+            endpoint = endpoint.replace("{model}", getModel())
+            endpoint += "?key=" + apiKey
+        }
+        return endpoint
+    }
 
     Rectangle {
         anchors.fill: parent
@@ -31,7 +77,7 @@ MuseScore {
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: 15
-            spacing: 10
+            spacing: 8
 
             // Header
             Text {
@@ -44,12 +90,102 @@ MuseScore {
 
             Text {
                 text: "Describe the changes you want to make to your score in natural language"
-                font.pixelSize: 12
+                font.pixelSize: 11
                 color: "#666"
                 Layout.alignment: Qt.AlignHCenter
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
                 horizontalAlignment: Text.AlignHCenter
+            }
+
+            // Provider selection
+            Rectangle {
+                Layout.fillWidth: true
+                height: providerColumn.implicitHeight + 20
+                color: "#e8f4e8"
+                border.color: "#4CAF50"
+                border.width: 1
+                radius: 4
+
+                ColumnLayout {
+                    id: providerColumn
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    spacing: 8
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+
+                        Text {
+                            text: "Provider:"
+                            font.pixelSize: 12
+                            font.bold: true
+                            color: "#333"
+                        }
+
+                        ComboBox {
+                            id: providerCombo
+                            Layout.preferredWidth: 180
+                            model: ["Claude (Anthropic)", "Gemini (Google)", "OpenAI", "Ollama (Local)"]
+                            currentIndex: currentProvider
+                            font.pixelSize: 11
+                            onCurrentIndexChanged: {
+                                currentProvider = currentIndex
+                                modelField.text = getProvider().model
+                            }
+                        }
+
+                        Text {
+                            text: "Model:"
+                            font.pixelSize: 12
+                            color: "#333"
+                        }
+
+                        TextField {
+                            id: modelField
+                            Layout.preferredWidth: 160
+                            text: getProvider().model
+                            font.pixelSize: 11
+                            placeholderText: "model name"
+                            onTextChanged: customModel = text
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+                        visible: getProvider().needsKey
+
+                        Text {
+                            text: "API Key:"
+                            font.pixelSize: 12
+                            font.bold: true
+                            color: "#333"
+                        }
+
+                        TextField {
+                            id: apiKeyField
+                            Layout.fillWidth: true
+                            text: apiKey
+                            font.pixelSize: 11
+                            echoMode: TextInput.Password
+                            placeholderText: currentProvider === 0 ? "sk-ant-..." :
+                                           currentProvider === 1 ? "AIza..." :
+                                           currentProvider === 2 ? "sk-..." : ""
+                            onTextChanged: apiKey = text
+                        }
+
+                        Button {
+                            text: apiKeyField.echoMode === TextInput.Password ? "Show" : "Hide"
+                            font.pixelSize: 10
+                            onClicked: {
+                                apiKeyField.echoMode = apiKeyField.echoMode === TextInput.Password ?
+                                    TextInput.Normal : TextInput.Password
+                            }
+                        }
+                    }
+                }
             }
 
             // Input area
@@ -118,6 +254,12 @@ MuseScore {
                             text: "Transpose"
                             font.pixelSize: 10
                             onClicked: inputText.text = "Transpose the score up by a perfect fifth"
+                            enabled: !isProcessing
+                        }
+                        Button {
+                            text: "Jazz Style"
+                            font.pixelSize: 10
+                            onClicked: inputText.text = "Transform this piece into jazz style with swing rhythm and extended chords"
                             enabled: !isProcessing
                         }
                     }
@@ -336,8 +478,14 @@ MuseScore {
             return
         }
 
+        // Validate API key if required
+        if (getProvider().needsKey && (!apiKey || apiKey.length < 10)) {
+            responseText.text = "Please enter a valid API key for " + getProvider().name
+            return
+        }
+
         isProcessing = true
-        responseText.text = "Processing your request...\n\nConnecting to: " + apiEndpoint
+        responseText.text = "Processing your request...\n\nProvider: " + getProvider().name + "\nModel: " + getModel()
 
         var scoreContext = "No score open"
         if (curScore) {
@@ -376,34 +524,58 @@ MuseScore {
 
     function sendToLLM(prompt) {
         var xhr = new XMLHttpRequest()
-        var endpoint = apiEndpoint
+        var endpoint = getEndpoint()
+        var model = getModel()
         var requestBody
 
-        // Determine API format based on endpoint
-        if (endpoint.indexOf("openai.com") !== -1) {
-            requestBody = JSON.stringify({
-                model: modelName,
-                messages: [
-                    { role: "system", content: "You are a music arrangement assistant. Output JSON." },
-                    { role: "user", content: prompt }
-                ],
-                temperature: 0.7
-            })
-        } else if (endpoint.indexOf("anthropic.com") !== -1) {
-            requestBody = JSON.stringify({
-                model: modelName,
-                max_tokens: 2048,
-                messages: [
-                    { role: "user", content: prompt }
-                ]
-            })
-        } else {
-            // Default Ollama format
-            requestBody = JSON.stringify({
-                model: modelName,
-                prompt: prompt,
-                stream: false
-            })
+        // Build request based on provider
+        switch (currentProvider) {
+            case 0: // Claude (Anthropic)
+                requestBody = JSON.stringify({
+                    model: model,
+                    max_tokens: 4096,
+                    messages: [
+                        { role: "user", content: prompt }
+                    ]
+                })
+                break
+
+            case 1: // Gemini (Google)
+                requestBody = JSON.stringify({
+                    contents: [
+                        {
+                            parts: [
+                                { text: prompt }
+                            ]
+                        }
+                    ],
+                    generationConfig: {
+                        temperature: 0.7,
+                        maxOutputTokens: 4096
+                    }
+                })
+                break
+
+            case 2: // OpenAI
+                requestBody = JSON.stringify({
+                    model: model,
+                    messages: [
+                        { role: "system", content: "You are a music arrangement assistant. Output JSON." },
+                        { role: "user", content: prompt }
+                    ],
+                    temperature: 0.7,
+                    max_tokens: 4096
+                })
+                break
+
+            case 3: // Ollama (Local)
+            default:
+                requestBody = JSON.stringify({
+                    model: model,
+                    prompt: prompt,
+                    stream: false
+                })
+                break
         }
 
         xhr.onreadystatechange = function() {
@@ -415,45 +587,76 @@ MuseScore {
                         var response = JSON.parse(xhr.responseText)
                         var content
 
-                        // Extract content based on API format
-                        if (response.choices) {
-                            content = response.choices[0].message.content
-                        } else if (response.content && response.content[0]) {
-                            content = response.content[0].text
-                        } else if (response.response) {
-                            content = response.response
-                        } else {
-                            content = xhr.responseText
+                        // Extract content based on provider
+                        switch (currentProvider) {
+                            case 0: // Claude
+                                if (response.content && response.content[0]) {
+                                    content = response.content[0].text
+                                }
+                                break
+
+                            case 1: // Gemini
+                                if (response.candidates && response.candidates[0]) {
+                                    var candidate = response.candidates[0]
+                                    if (candidate.content && candidate.content.parts && candidate.content.parts[0]) {
+                                        content = candidate.content.parts[0].text
+                                    }
+                                }
+                                break
+
+                            case 2: // OpenAI
+                                if (response.choices && response.choices[0]) {
+                                    content = response.choices[0].message.content
+                                }
+                                break
+
+                            case 3: // Ollama
+                            default:
+                                content = response.response
+                                break
                         }
 
-                        processLLMResponse(content)
+                        if (content) {
+                            processLLMResponse(content)
+                        } else {
+                            responseText.text = "Empty response from API.\n\nRaw:\n" + xhr.responseText.substring(0, 500)
+                        }
                     } catch (e) {
                         responseText.text = "Error parsing response: " + e.message + "\n\nRaw response:\n" + xhr.responseText.substring(0, 500)
                     }
                 } else if (xhr.status === 0) {
-                    responseText.text = "Connection failed!\n\nCould not connect to: " + endpoint + "\n\nMake sure:\n1. Ollama is running (ollama serve)\n2. The API endpoint is correct\n3. The model is downloaded (ollama pull " + modelName + ")"
+                    responseText.text = "Connection failed!\n\nCould not connect to API.\n\nCheck your internet connection and API key."
+                } else if (xhr.status === 401) {
+                    responseText.text = "Authentication failed (401).\n\nPlease check your API key."
+                } else if (xhr.status === 429) {
+                    responseText.text = "Rate limit exceeded (429).\n\nPlease wait a moment and try again."
                 } else {
-                    responseText.text = "API Error (Status " + xhr.status + ")\n\n" + xhr.responseText.substring(0, 300)
+                    responseText.text = "API Error (Status " + xhr.status + ")\n\n" + xhr.responseText.substring(0, 500)
                 }
             }
         }
 
         xhr.onerror = function() {
             isProcessing = false
-            responseText.text = "Network error!\n\nCould not connect to: " + endpoint + "\n\nCheck if the server is running."
+            responseText.text = "Network error!\n\nCould not connect to API.\nCheck your internet connection."
         }
 
         try {
             xhr.open("POST", endpoint)
             xhr.setRequestHeader("Content-Type", "application/json")
 
-            if (apiKey && apiKey.length > 0) {
-                if (endpoint.indexOf("openai.com") !== -1) {
-                    xhr.setRequestHeader("Authorization", "Bearer " + apiKey)
-                } else if (endpoint.indexOf("anthropic.com") !== -1) {
+            // Set auth headers based on provider
+            switch (currentProvider) {
+                case 0: // Claude
                     xhr.setRequestHeader("x-api-key", apiKey)
                     xhr.setRequestHeader("anthropic-version", "2023-06-01")
-                }
+                    break
+
+                case 2: // OpenAI
+                    xhr.setRequestHeader("Authorization", "Bearer " + apiKey)
+                    break
+
+                // Gemini uses key in URL, Ollama needs no auth
             }
 
             xhr.send(requestBody)
