@@ -1,0 +1,47 @@
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Node modules (if any)
+node_modules/
+
+# Build outputs
+build/
+dist/
+
+# API keys and secrets
+.env
+.env.local
+*.key
+secrets.json
+config.local.json
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# MuseScore backup files
+*.mscz~
+*.mscz,
+*.mscz.backup
+
+# Test scores
+test_scores/
+*.test.mscz

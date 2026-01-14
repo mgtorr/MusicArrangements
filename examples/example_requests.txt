@@ -1,0 +1,88 @@
+# Example Requests for LLM Arranger Plugin
+# These are sample requests you can use to test the plugin
+
+## Basic Operations
+
+# Transposition
+Transpose the entire score up by a perfect fifth
+Transpose the melody down a minor third
+Move the piece to the key of D major
+
+# Dynamics
+Add a forte marking at measure 1
+Make the first 4 measures piano and measures 5-8 forte
+Add a crescendo from measure 8 to measure 16
+
+# Tempo
+Set the tempo to 120 BPM
+Make it faster, around allegro tempo
+Add a rallentando in the last 2 measures
+
+
+## Arrangement Requests
+
+# Adding Parts
+Add a bass line that follows the chord progression
+Add a simple drum beat in rock style
+Add a violin harmony a third above the melody
+
+# Removing/Simplifying
+Remove the percussion part
+Simplify the left hand of the piano part
+Reduce this to a lead sheet with melody and chords
+
+# Orchestration
+Orchestrate this for string quartet
+Add woodwind doublings to the melody
+Create a full band arrangement
+
+
+## Style Transformations
+
+# Jazz
+Convert this to a jazz ballad style
+Add jazz chord extensions (7ths and 9ths)
+Make it swing
+Add a walking bass line
+
+# Rock/Pop
+Make this more rock-oriented with power chords
+Add a driving eighth-note bass pattern
+Create a pop arrangement with synth pads
+
+# Classical
+Add classical ornaments (trills, mordents)
+Make it sound more baroque
+Add counterpoint to the melody
+
+# Latin
+Add Latin percussion (congas, timbales)
+Create a bossa nova feel
+Add a montuno piano pattern
+
+
+## Advanced Requests
+
+# Harmonization
+Harmonize the melody in 4-part chorale style
+Add parallel thirds to the vocal line
+Create a barbershop quartet arrangement
+
+# Texture Changes
+Make the accompaniment more sparse
+Thicken the texture in the chorus
+Add sustained strings in the background
+
+# Form Modifications
+Add an introduction based on the main theme
+Create a coda using material from the bridge
+Extend the ending with a dramatic finale
+
+
+## Combined Requests
+
+# Multiple Changes
+Transpose to G major and add a jazz feel
+Add drums and bass with a rock groove
+Make it orchestral with a crescendo in the middle section
+Convert to swing style with walking bass and add brushes on drums
