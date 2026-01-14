@@ -17,7 +17,7 @@ MuseScore {
     // Provider configurations
     property var providers: [
         { name: "Claude (Anthropic)", endpoint: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-20250514", needsKey: true },
-        { name: "Gemini (Google)", endpoint: "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent", model: "gemini-1.5-flash", needsKey: true },
+        { name: "Gemini (Google)", endpoint: "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent", model: "gemini-2.0-flash", needsKey: true },
         { name: "OpenAI", endpoint: "https://api.openai.com/v1/chat/completions", model: "gpt-4o", needsKey: true },
         { name: "Ollama (Local)", endpoint: "http://localhost:11434/api/generate", model: "llama3", needsKey: false }
     ]
