@@ -301,14 +301,49 @@ class LLMBridgeServer:
         server_task.cancel()
 
 
-async def main():
+async def run_headless(server: LLMBridgeServer):
+    """Run in headless mode (no CLI, just WebSocket server)"""
+    print("\n" + "=" * 60)
+    print("LLM Bridge Server - Headless Mode")
+    print("=" * 60)
+    print(f"\nWebSocket server running on ws://localhost:8766")
+    print("Waiting for MuseScore plugin to connect...")
+    print("\nTo send commands, use HTTP API or connect another client.")
+    print("Press Ctrl+C to stop.\n")
+
+    # Just keep running
+    await asyncio.Future()
+
+
+async def main(headless: bool = False):
     """Main entry point"""
     server = LLMBridgeServer()
-    await server.start()
+
+    # Configure LLM if API key is available
+    if server.config.get("api_key"):
+        server.configure_llm(
+            server.config.get("provider", "claude"),
+            server.config["api_key"],
+            server.config.get("model")
+        )
+
+    # Start WebSocket server
+    server_task = asyncio.create_task(server.bridge.start_server())
+    await asyncio.sleep(0.5)
+
+    if headless:
+        await run_headless(server)
+    else:
+        await server.run_cli()
+
+    server_task.cancel()
 
 
 if __name__ == "__main__":
+    import sys
+    headless = "--headless" in sys.argv or "-H" in sys.argv
+
     try:
-        asyncio.run(main())
+        asyncio.run(main(headless=headless))
     except KeyboardInterrupt:
         print("\nShutting down...")
