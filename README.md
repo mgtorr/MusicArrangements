@@ -1,202 +1,200 @@
-# MuseScore LLM Arranger Plugin
+# MuseScore LLM Bridge
 
-A MuseScore plugin that integrates Large Language Models (LLM) to enable natural language control over musical arrangements. Describe the changes you want in plain language, and the plugin will interpret and apply them to your score.
+AI-powered music arrangement for MuseScore using the "Bridge" architecture.
 
-## Features
+## Architecture
 
-- **Natural Language Interface**: Describe arrangement changes in plain English/French
-- **Multiple LLM Support**: Works with Ollama (local), OpenAI, Anthropic Claude, or custom APIs
-- **Smart Score Analysis**: Automatically analyzes your score context for better suggestions
-- **Style Transformations**: Apply jazz, rock, classical, latin styles and more
-- **Intelligent Harmonization**: Add harmony voices following proper voice-leading principles
-- **Orchestration Assistance**: Expand arrangements or reduce to smaller ensembles
-- **Dynamic & Articulation Control**: Add crescendos, dynamics, and articulations
+```
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│   MuseScore     │────▶│  Python Server   │────▶│      LLM        │
+│   QML Plugin    │◀────│   (Middleware)   │◀────│ (Claude/Gemini) │
+│   "The Ear"     │     │   "The Brain"    │     │                 │
+└─────────────────┘     └──────────────────┘     └─────────────────┘
+     WebSocket              Music21                   API
+```
+
+### Components
+
+1. **The Ear** (MuseScore Plugin)
+   - QML plugin that listens for commands via WebSocket
+   - Executes atomic commands on the score
+   - Reports score state back to server
+
+2. **The Brain** (Python Middleware)
+   - Receives natural language requests
+   - Uses LLM to interpret intent
+   - Uses Music21 for musical calculations
+   - Validates commands before sending
+   - Sends atomic commands to plugin
+
+3. **The Translator** (LLM)
+   - Interprets natural language requests
+   - Generates structured commands
+   - Understands musical concepts
 
 ## Installation
 
-### Prerequisites
+### 1. Install Python Server
 
-- MuseScore 3.6+ or MuseScore 4.x
-- An LLM backend (one of):
-  - [Ollama](https://ollama.ai) (recommended for local/free usage)
-  - OpenAI API key
-  - Anthropic API key
-  - Custom LLM API endpoint
+```bash
+cd MusicArrangements
+pip install -r requirements.txt
 
-### Steps
+# Copy and edit config
+cp server/config.example.json server/config.json
+# Edit config.json with your API key
+```
 
-1. **Download the plugin**
-   ```bash
-   git clone https://github.com/mgtorr/MusicArrangements.git
-   ```
+### 2. Install MuseScore Plugin
 
-2. **Copy to MuseScore plugins folder**
+Copy `plugin/LLMBridge.qml` to your MuseScore plugins folder:
 
-   - **Windows**: `%HOMEPATH%\Documents\MuseScore3\Plugins\` or `%HOMEPATH%\Documents\MuseScore4\Plugins\`
-   - **macOS**: `~/Documents/MuseScore3/Plugins/` or `~/Documents/MuseScore4/Plugins/`
-   - **Linux**: `~/Documents/MuseScore3/Plugins/` or `~/Documents/MuseScore4/Plugins/`
+- **Windows**: `%HOMEPATH%\Documents\MuseScore4\Plugins\`
+- **macOS**: `~/Documents/MuseScore4/Plugins/`
+- **Linux**: `~/Documents/MuseScore4/Plugins/`
 
-   Copy the `src/LLMArrangerPlugin.qml` and associated `.js` files to this directory.
+Enable in MuseScore: Plugins → Plugin Manager → LLM Bridge
 
-3. **Enable the plugin in MuseScore**
-   - Go to `Plugins` → `Plugin Manager`
-   - Find "LLM Arranger" and check the box to enable it
-   - Restart MuseScore if prompted
+### 3. Configure API Key
 
-4. **Set up your LLM backend**
+Set environment variable:
+```bash
+export LLM_API_KEY="your-api-key"
+export LLM_PROVIDER="claude"  # or "gemini" or "openai"
+```
 
-   **Option A: Ollama (Local, Free)**
-   ```bash
-   # Install Ollama from https://ollama.ai
-   ollama pull llama3  # or another model
-   ollama serve  # Start the server (usually runs automatically)
-   ```
-
-   **Option B: OpenAI**
-   - Get an API key from https://platform.openai.com
-   - Configure in plugin settings
-
-   **Option C: Anthropic Claude**
-   - Get an API key from https://console.anthropic.com
-   - Configure in plugin settings
+Or edit `server/config.json`:
+```json
+{
+    "provider": "claude",
+    "api_key": "sk-ant-...",
+    "model": "claude-sonnet-4-20250514"
+}
+```
 
 ## Usage
 
-1. **Open a score** in MuseScore
+### 1. Start the Server
 
-2. **Launch the plugin**: `Plugins` → `LLM Arranger`
+```bash
+cd MusicArrangements/server
+python main.py
+```
 
-3. **Enter your request** in natural language:
-   - "Add a violin harmony line a third above the melody"
-   - "Transpose the entire piece up a perfect fourth"
-   - "Add drums with a rock beat pattern"
-   - "Change the style to jazz swing"
-   - "Add a crescendo from measure 8 to measure 16"
+### 2. Connect MuseScore
 
-4. **Click "Apply Changes"** - the plugin will:
-   - Send your request to the LLM
-   - Parse the response
-   - Show you the proposed actions
-   - Ask for confirmation before applying
+1. Open MuseScore
+2. Open a score
+3. Launch plugin: Plugins → LLM Bridge
+4. Click "Connect to Server"
 
-5. **Review and confirm** the changes
+### 3. Send Commands
 
-## Example Requests
+In the server terminal:
+```
+>>> Add a C major chord at the beginning
+>>> Add walking bass in G major
+>>> Transpose up a perfect fifth
+>>> Add rock drum pattern for 4 measures
+```
 
-### Arrangement
-- "Add a bass line following the chord progression"
-- "Harmonize the melody with thirds and sixths"
-- "Create a string quartet arrangement"
-- "Reduce this to a piano solo"
+Or use built-in music logic:
+```
+>>> /bass
+Chords (e.g., G C D G): G C D G
+Measures: 4
 
-### Style
-- "Apply jazz chord voicings"
-- "Make it sound more rock"
-- "Add Latin percussion patterns"
-- "Make it baroque style with ornaments"
+>>> /drums
+Style (rock/jazz/pop/latin/metal): jazz
+Measures: 8
+```
 
-### Dynamics & Expression
-- "Add a crescendo in the second phrase"
-- "Make measures 1-4 piano and 5-8 forte"
-- "Add staccato to the bass line"
-- "Add a rallentando at the end"
+## Atomic Commands
 
-### Transposition
-- "Transpose up a minor third"
-- "Move to the key of G major"
-- "Transpose for tenor voice range"
+The system uses these atomic commands:
 
-## Configuration
+| Command | Description | Parameters |
+|---------|-------------|------------|
+| `add_note` | Add single note | pitch, duration, measure, track |
+| `add_chord` | Add chord | pitches[], duration, measure, track |
+| `add_rest` | Add rest | duration, measure, track |
+| `add_dynamic` | Add dynamic | dynamic (pp/p/mp/mf/f/ff), measure |
+| `add_tempo` | Add tempo | bpm, measure, text |
+| `add_text` | Add text | text, measure, textType |
+| `transpose` | Transpose | semitones |
 
-### Settings Dialog
+## MIDI Pitch Reference
 
-Click "Settings" to configure:
+```
+C4 (middle C) = 60
+D4 = 62, E4 = 64, F4 = 65, G4 = 67, A4 = 69, B4 = 71
+C5 = 72, C3 = 48, C2 = 36 (bass)
+```
 
-| Setting | Description |
-|---------|-------------|
-| Provider | Select LLM provider (Ollama, OpenAI, Anthropic, Custom) |
-| API Endpoint | The URL of the LLM API |
-| API Key | Your API key (not needed for local Ollama) |
-| Model | The model to use (e.g., llama3, gpt-4, claude-3-sonnet) |
+## Duration Reference (ticks)
 
-### Default Endpoints
+```
+Whole = 1920
+Half = 960
+Quarter = 480
+Eighth = 240
+16th = 120
+```
 
-| Provider | Default Endpoint |
-|----------|-----------------|
-| Ollama | `http://localhost:11434/api/generate` |
-| OpenAI | `https://api.openai.com/v1/chat/completions` |
-| Anthropic | `https://api.anthropic.com/v1/messages` |
+## Supported LLM Providers
+
+| Provider | Models | API Key Format |
+|----------|--------|----------------|
+| Claude | claude-sonnet-4-20250514, claude-3-5-sonnet | sk-ant-... |
+| Gemini | gemini-2.0-flash, gemini-1.5-pro | AIza... |
+| OpenAI | gpt-4o, gpt-4-turbo | sk-... |
 
 ## Project Structure
 
 ```
 MusicArrangements/
-├── src/
-│   ├── LLMArrangerPlugin.qml   # Main plugin file
-│   ├── ScoreUtils.js           # Score manipulation utilities
-│   └── PromptTemplates.js      # LLM prompt templates
-├── docs/
-│   └── API.md                  # API documentation
-├── examples/
-│   └── (example scores)
-├── package.json
+├── plugin/
+│   └── LLMBridge.qml      # MuseScore plugin
+├── server/
+│   ├── main.py            # Main server entry point
+│   ├── bridge_server.py   # WebSocket bridge
+│   ├── llm_interpreter.py # LLM integration
+│   ├── music_logic.py     # Music21 calculations
+│   ├── validator.py       # Command validation
+│   └── config.json        # Configuration
+├── schemas/               # Command schemas
+├── requirements.txt
 └── README.md
 ```
 
-## Supported Actions
-
-The plugin can perform these score modifications:
-
-| Action | Description |
-|--------|-------------|
-| `add_instrument` | Add a new instrument part |
-| `remove_instrument` | Remove an existing part |
-| `transpose` | Transpose notes by semitones |
-| `add_notes` | Add notes to a part |
-| `add_dynamics` | Add dynamic markings (pp, p, mp, mf, f, ff) |
-| `add_tempo` | Add tempo markings |
-| `add_articulation` | Add articulation marks |
-| `add_crescendo` | Add hairpin dynamics |
-| `harmonize` | Create harmony voices |
-| `change_style` | Apply style transformations |
-
-## Limitations
-
-- **Adding instruments**: Due to MuseScore plugin API limitations, adding new instruments may require manual intervention
-- **Complex operations**: Some advanced operations may be suggested but need manual implementation
-- **LLM accuracy**: Results depend on the LLM's understanding; review all changes before saving
-
 ## Troubleshooting
 
-### Plugin doesn't appear
-- Ensure the `.qml` file is in the correct plugins folder
-- Restart MuseScore after copying files
-- Check `Plugins` → `Plugin Manager`
+### Plugin shows "Disconnected"
+- Ensure Python server is running (`python main.py`)
+- Check that port 8766 is not blocked
 
-### Connection errors
-- For Ollama: Ensure `ollama serve` is running
-- Check your API endpoint URL
-- Verify your API key is correct
+### LLM errors
+- Verify API key is correct
+- Check provider name matches key type
+- Try a different model
 
-### Poor results
-- Try a more capable model (e.g., gpt-4 instead of gpt-3.5)
-- Provide more specific requests
-- Include context like "in jazz style" or "for piano"
+### Commands not executing
+- Check MuseScore console for errors
+- Verify score is open
+- Check command validation errors in server output
 
-## Contributing
+## Development
 
-Contributions are welcome! Please:
+### Adding New Commands
 
-1. Fork the repository
-2. Create a feature branch
-3. Submit a pull request
+1. Add command handler in `plugin/LLMBridge.qml`
+2. Add command schema in `server/llm_interpreter.py`
+3. Add validation in `server/validator.py`
+
+### Adding Music Logic
+
+Add functions to `server/music_logic.py` using Music21.
 
 ## License
 
-MIT License - see LICENSE file for details.
-
-## Acknowledgments
-
-- MuseScore team for the plugin API
-- Ollama, OpenAI, and Anthropic for LLM APIs
-- The open-source music technology community
+MIT License
