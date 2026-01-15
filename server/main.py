@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 LLM Bridge Main Server
-Integrates all components: WebSocket bridge, LLM interpreter, music logic, and validator
+Integrates all components: HTTP bridge, LLM interpreter, music logic, and validator
 """
 
 import asyncio
@@ -11,9 +11,6 @@ import os
 import sys
 from typing import Optional, Dict, List
 from pathlib import Path
-
-import websockets
-from websockets.server import WebSocketServerProtocol
 
 from bridge_server import MuseScoreBridge, AtomicCommand
 from llm_interpreter import LLMInterpreter, interpreter
@@ -211,7 +208,7 @@ class LLMBridgeServer:
         print("  /bass      - Generate walking bass (Music21)")
         print("  /drums     - Generate drum pattern (Music21)")
         print("  /info      - Show current score info")
-        print("  /ping      - Ping MuseScore plugin")
+        print("  /ping      - Check plugin connection status")
         print("  /quit      - Exit")
         print("\n")
 
@@ -236,8 +233,10 @@ class LLMBridgeServer:
                         print("No score info available")
 
                 elif user_input == "/ping":
-                    success = await self.bridge.ping()
-                    print("Ping sent" if success else "Not connected")
+                    if self.bridge.state.value == "connected":
+                        print("Plugin connected")
+                    else:
+                        print("Plugin not connected - waiting for plugin to call /ping endpoint")
 
                 elif user_input == "/bass":
                     chords = input("Chords (e.g., G C D G): ").strip().split()
@@ -286,12 +285,12 @@ class LLMBridgeServer:
         else:
             logger.warning("No API key configured. Set LLM_API_KEY environment variable.")
 
-        # Start WebSocket server in background
+        # Start HTTP server in background
         server_task = asyncio.create_task(self.bridge.start_server())
 
         # Wait a moment for server to start
         await asyncio.sleep(0.5)
-        print(f"\nWebSocket server running on ws://localhost:8766")
+        print(f"\nHTTP server running on http://localhost:8766")
         print("Waiting for MuseScore plugin to connect...")
 
         # Run CLI
@@ -302,13 +301,13 @@ class LLMBridgeServer:
 
 
 async def run_headless(server: LLMBridgeServer):
-    """Run in headless mode (no CLI, just WebSocket server)"""
+    """Run in headless mode (no CLI, just HTTP server)"""
     print("\n" + "=" * 60)
     print("LLM Bridge Server - Headless Mode")
     print("=" * 60)
-    print(f"\nWebSocket server running on ws://localhost:8766")
+    print(f"\nHTTP server running on http://localhost:8766")
     print("Waiting for MuseScore plugin to connect...")
-    print("\nTo send commands, use HTTP API or connect another client.")
+    print("\nEndpoints: /ping, /poll, /score_info, /results")
     print("Press Ctrl+C to stop.\n")
 
     # Just keep running
@@ -327,7 +326,7 @@ async def main(headless: bool = False):
             server.config.get("model")
         )
 
-    # Start WebSocket server
+    # Start HTTP server
     server_task = asyncio.create_task(server.bridge.start_server())
     await asyncio.sleep(0.5)
 

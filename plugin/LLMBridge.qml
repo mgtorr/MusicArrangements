@@ -1,71 +1,30 @@
 import QtQuick 2.9
 import QtQuick.Controls 2.2
-import QtWebSockets 1.1
 import MuseScore 3.0
 
 MuseScore {
     id: plugin
     version: "2.0.0"
-    description: "LLM Bridge - WebSocket listener for AI-driven score modifications"
+    description: "LLM Bridge - HTTP connection for AI-driven score modifications"
     menuPath: "Plugins.LLM Bridge"
-    pluginType: "dock"
-    dockArea: "right"
+    pluginType: "dialog"
     requiresScore: false
 
-    width: 300
-    height: 400
+    width: 400
+    height: 500
 
+    property string serverUrl: "http://localhost:8766"
     property bool connected: false
     property int commandsExecuted: 0
+    property var pendingCommands: []
 
-    // WebSocket Server
-    WebSocketServer {
-        id: server
-        port: 8765
-        listen: true
-
-        onClientConnected: {
-            console.log("Client connected")
-            connected = true
-            statusText.text = "Connected"
-            statusText.color = "#4CAF50"
-
-            webSocket.onTextMessageReceived.connect(function(message) {
-                handleMessage(message)
-            })
-        }
-
-        onErrorStringChanged: {
-            console.log("WebSocket error: " + errorString)
-            logMessage("Error: " + errorString)
-        }
-    }
-
-    // Alternative: WebSocket client mode (connects to Python server)
-    WebSocket {
-        id: clientSocket
-        url: "ws://localhost:8766"
-        active: false
-
-        onStatusChanged: {
-            if (status === WebSocket.Open) {
-                connected = true
-                statusText.text = "Connected to server"
-                statusText.color = "#4CAF50"
-                // Send handshake
-                sendCommand({ type: "handshake", plugin: "musescore", version: "2.0.0" })
-            } else if (status === WebSocket.Closed) {
-                connected = false
-                statusText.text = "Disconnected"
-                statusText.color = "#f44336"
-            } else if (status === WebSocket.Error) {
-                logMessage("Connection error: " + errorString)
-            }
-        }
-
-        onTextMessageReceived: {
-            handleMessage(message)
-        }
+    // Polling timer
+    Timer {
+        id: pollTimer
+        interval: 1000
+        repeat: true
+        running: connected
+        onTriggered: pollServer()
     }
 
     Rectangle {
@@ -74,34 +33,43 @@ MuseScore {
 
         Column {
             anchors.fill: parent
-            anchors.margins: 10
+            anchors.margins: 12
             spacing: 10
 
             // Header
             Text {
                 text: "LLM Bridge"
-                font.pixelSize: 16
+                font.pixelSize: 18
                 font.bold: true
                 color: "white"
             }
 
-            // Status
+            // Status row
             Row {
                 spacing: 10
                 Text { text: "Status:"; color: "#aaa"; font.pixelSize: 12 }
                 Text {
                     id: statusText
-                    text: "Waiting..."
-                    color: "#ff9800"
+                    text: "Disconnected"
+                    color: "#f44336"
                     font.pixelSize: 12
                 }
             }
 
-            // Port info
-            Text {
-                text: "WebSocket: ws://localhost:8765"
-                color: "#888"
-                font.pixelSize: 10
+            // Server URL
+            Row {
+                spacing: 8
+                width: parent.width
+                Text { text: "Server:"; color: "#aaa"; font.pixelSize: 11; anchors.verticalCenter: parent.verticalCenter }
+                TextField {
+                    id: urlField
+                    width: parent.width - 60
+                    text: serverUrl
+                    font.pixelSize: 11
+                    color: "white"
+                    background: Rectangle { color: "#3d3d3d"; radius: 3 }
+                    onTextChanged: serverUrl = text
+                }
             }
 
             // Commands counter
@@ -116,30 +84,29 @@ MuseScore {
                 }
             }
 
-            // Score info
+            // Score info box
             Rectangle {
                 width: parent.width
-                height: 60
+                height: 70
                 color: "#3d3d3d"
                 radius: 4
 
                 Column {
                     anchors.fill: parent
-                    anchors.margins: 8
+                    anchors.margins: 10
                     spacing: 4
 
                     Text {
                         text: "Current Score:"
                         color: "#aaa"
-                        font.pixelSize: 10
+                        font.pixelSize: 11
                     }
                     Text {
-                        id: scoreInfo
-                        text: curScore ? curScore.title || "Untitled" : "No score open"
+                        id: scoreTitle
+                        text: curScore ? (curScore.title || "Untitled") : "No score open"
                         color: "white"
-                        font.pixelSize: 12
-                        elide: Text.ElideRight
-                        width: parent.width
+                        font.pixelSize: 13
+                        font.bold: true
                     }
                     Text {
                         text: curScore ? (curScore.nmeasures + " measures, " + curScore.nstaves + " staves") : ""
@@ -149,90 +116,236 @@ MuseScore {
                 }
             }
 
-            // Connect button
-            Button {
-                text: connected ? "Disconnect" : "Connect to Server"
+            // Buttons row
+            Row {
+                spacing: 10
                 width: parent.width
-                onClicked: {
-                    if (connected) {
-                        clientSocket.active = false
-                    } else {
-                        clientSocket.active = true
+
+                Button {
+                    text: connected ? "Disconnect" : "Connect"
+                    width: (parent.width - 10) / 2
+                    onClicked: {
+                        if (connected) {
+                            disconnect()
+                        } else {
+                            connect()
+                        }
                     }
+                }
+
+                Button {
+                    text: "Send Score Info"
+                    width: (parent.width - 10) / 2
+                    enabled: connected && curScore
+                    onClicked: sendScoreInfo()
                 }
             }
 
             // Log area
             Rectangle {
                 width: parent.width
-                height: 150
+                height: 180
                 color: "#1a1a1a"
                 radius: 4
 
-                Flickable {
+                Column {
                     anchors.fill: parent
-                    anchors.margins: 5
-                    contentHeight: logText.implicitHeight
-                    clip: true
+                    anchors.margins: 8
+                    spacing: 4
 
                     Text {
-                        id: logText
-                        width: parent.width
-                        text: "Ready.\n"
-                        color: "#0f0"
-                        font.family: "monospace"
+                        text: "Log:"
+                        color: "#888"
                         font.pixelSize: 10
-                        wrapMode: Text.Wrap
+                    }
+
+                    Flickable {
+                        width: parent.width
+                        height: parent.height - 20
+                        contentHeight: logText.implicitHeight
+                        clip: true
+
+                        Text {
+                            id: logText
+                            width: parent.width
+                            text: "Ready. Click 'Connect' to connect to Python server.\n"
+                            color: "#0f0"
+                            font.family: "monospace"
+                            font.pixelSize: 10
+                            wrapMode: Text.Wrap
+                        }
                     }
                 }
             }
 
-            // Manual test button
-            Button {
-                text: "Test: Add C4 Note"
+            // Test buttons
+            Row {
+                spacing: 8
                 width: parent.width
-                enabled: curScore !== null
-                onClicked: {
-                    executeCommand({ type: "add_note", pitch: 60, duration: 480 })
+
+                Button {
+                    text: "Test: Add C4"
+                    width: (parent.width - 16) / 3
+                    enabled: curScore !== null
+                    font.pixelSize: 10
+                    onClicked: executeCommand({ type: "add_note", pitch: 60, duration: 480, measure: 0 })
                 }
+
+                Button {
+                    text: "Test: Add Chord"
+                    width: (parent.width - 16) / 3
+                    enabled: curScore !== null
+                    font.pixelSize: 10
+                    onClicked: executeCommand({ type: "add_chord", pitches: [60, 64, 67], duration: 480, measure: 0 })
+                }
+
+                Button {
+                    text: "Test: Dynamic"
+                    width: (parent.width - 16) / 3
+                    enabled: curScore !== null
+                    font.pixelSize: 10
+                    onClicked: executeCommand({ type: "add_dynamic", dynamic: "ff", measure: 0 })
+                }
+            }
+
+            Button {
+                text: "Close"
+                width: parent.width
+                onClicked: Qt.quit()
             }
         }
     }
 
-    // Message handler
-    function handleMessage(message) {
+    // === CONNECTION ===
+
+    function connect() {
+        log("Connecting to " + serverUrl + "...")
+        var xhr = new XMLHttpRequest()
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                if (xhr.status === 200) {
+                    connected = true
+                    statusText.text = "Connected"
+                    statusText.color = "#4CAF50"
+                    log("Connected!")
+                    sendScoreInfo()
+                } else {
+                    log("Connection failed: " + xhr.status)
+                    statusText.text = "Failed"
+                    statusText.color = "#f44336"
+                }
+            }
+        }
+        xhr.open("GET", serverUrl + "/ping")
+        xhr.send()
+    }
+
+    function disconnect() {
+        connected = false
+        statusText.text = "Disconnected"
+        statusText.color = "#f44336"
+        log("Disconnected")
+    }
+
+    function pollServer() {
+        var xhr = new XMLHttpRequest()
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                if (xhr.status === 200) {
+                    try {
+                        var response = JSON.parse(xhr.responseText)
+                        if (response.commands && response.commands.length > 0) {
+                            processCommands(response.commands)
+                        }
+                    } catch (e) {
+                        // No commands or parse error
+                    }
+                } else if (xhr.status === 0) {
+                    // Connection lost
+                    disconnect()
+                }
+            }
+        }
+        xhr.open("GET", serverUrl + "/poll")
+        xhr.send()
+    }
+
+    function processCommands(commands) {
+        log("Received " + commands.length + " command(s)")
+        for (var i = 0; i < commands.length; i++) {
+            executeCommand(commands[i])
+        }
+        // Send results back
+        sendResults()
+    }
+
+    // === SCORE INFO ===
+
+    function sendScoreInfo() {
+        if (!curScore) {
+            log("No score open")
+            return
+        }
+
+        var info = {
+            title: curScore.title || "Untitled",
+            composer: curScore.composer || "",
+            measures: curScore.nmeasures,
+            staves: curScore.nstaves,
+            parts: []
+        }
+
+        // Get parts
+        for (var i = 0; i < curScore.parts.length; i++) {
+            var part = curScore.parts[i]
+            info.parts.push({
+                name: part.longName || part.shortName || "Part " + (i+1)
+            })
+        }
+
+        // Get time/key signature
         try {
-            var cmd = JSON.parse(message)
-            logMessage("< " + cmd.type)
-
-            if (cmd.type === "ping") {
-                sendResponse({ type: "pong", timestamp: Date.now() })
-            } else if (cmd.type === "get_score_info") {
-                sendScoreInfo()
-            } else if (cmd.type === "get_selection") {
-                sendSelectionInfo()
-            } else if (cmd.type === "execute") {
-                // Execute a batch of atomic commands
-                var results = []
-                for (var i = 0; i < cmd.commands.length; i++) {
-                    var result = executeCommand(cmd.commands[i])
-                    results.push(result)
+            var cursor = curScore.newCursor()
+            cursor.rewind(0)
+            if (cursor.timeSignature) {
+                info.timeSignature = {
+                    numerator: cursor.timeSignature.numerator,
+                    denominator: cursor.timeSignature.denominator
                 }
-                sendResponse({ type: "execute_result", success: true, results: results })
-            } else {
-                // Single command
-                var result = executeCommand(cmd)
-                sendResponse({ type: "command_result", success: result.success, data: result })
             }
-        } catch (e) {
-            logMessage("Error: " + e.message)
-            sendResponse({ type: "error", message: e.message })
+            if (cursor.keySignature !== undefined) {
+                info.keySignature = cursor.keySignature
+            }
+        } catch (e) {}
+
+        var xhr = new XMLHttpRequest()
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                if (xhr.status === 200) {
+                    log("Score info sent")
+                } else {
+                    log("Failed to send score info")
+                }
+            }
         }
+        xhr.open("POST", serverUrl + "/score_info")
+        xhr.setRequestHeader("Content-Type", "application/json")
+        xhr.send(JSON.stringify(info))
     }
 
-    // Execute atomic command
+    function sendResults() {
+        // Send execution results back to server
+        var xhr = new XMLHttpRequest()
+        xhr.open("POST", serverUrl + "/results")
+        xhr.setRequestHeader("Content-Type", "application/json")
+        xhr.send(JSON.stringify({ executed: commandsExecuted }))
+    }
+
+    // === COMMAND EXECUTION ===
+
     function executeCommand(cmd) {
         if (!curScore) {
+            log("Error: No score open")
             return { success: false, error: "No score open" }
         }
 
@@ -247,14 +360,11 @@ MuseScore {
                 case "add_note":
                     result = cmdAddNote(cmd)
                     break
-                case "add_rest":
-                    result = cmdAddRest(cmd)
-                    break
                 case "add_chord":
                     result = cmdAddChord(cmd)
                     break
-                case "set_cursor":
-                    result = cmdSetCursor(cmd)
+                case "add_rest":
+                    result = cmdAddRest(cmd)
                     break
                 case "add_dynamic":
                     result = cmdAddDynamic(cmd)
@@ -268,21 +378,16 @@ MuseScore {
                 case "transpose":
                     result = cmdTranspose(cmd)
                     break
-                case "delete_selection":
-                    result = cmdDeleteSelection(cmd)
-                    break
-                case "select_range":
-                    result = cmdSelectRange(cmd)
-                    break
                 default:
                     result = { success: false, error: "Unknown command: " + cmd.type }
             }
         } catch (e) {
             result = { success: false, error: e.message }
+            log("Error: " + e.message)
         }
 
         curScore.endCmd()
-        logMessage(cmd.type + ": " + (result.success ? "OK" : result.error))
+        log(cmd.type + ": " + (result.success ? "OK" : result.error))
         return result
     }
 
@@ -293,23 +398,40 @@ MuseScore {
         cursor.track = cmd.track || 0
         cursor.rewind(0)
 
-        // Move to position
         if (cmd.measure !== undefined) {
             for (var i = 0; i < cmd.measure; i++) {
                 cursor.nextMeasure()
             }
         }
-        if (cmd.tick !== undefined) {
-            cursor.rewindToTick(cmd.tick)
-        }
 
-        // Set duration
         cursor.setDuration(cmd.duration || 480, 1)
-
-        // Add note
         cursor.addNote(cmd.pitch)
 
-        return { success: true, tick: cursor.tick }
+        return { success: true }
+    }
+
+    function cmdAddChord(cmd) {
+        var cursor = curScore.newCursor()
+        cursor.track = cmd.track || 0
+        cursor.rewind(0)
+
+        if (cmd.measure !== undefined) {
+            for (var i = 0; i < cmd.measure; i++) {
+                cursor.nextMeasure()
+            }
+        }
+
+        cursor.setDuration(cmd.duration || 480, 1)
+        cursor.addNote(cmd.pitches[0])
+
+        // Add remaining notes to chord
+        if (cursor.element && cursor.element.type === Element.CHORD) {
+            for (var i = 1; i < cmd.pitches.length; i++) {
+                cursor.addNote(cmd.pitches[i], true)
+            }
+        }
+
+        return { success: true }
     }
 
     function cmdAddRest(cmd) {
@@ -327,37 +449,6 @@ MuseScore {
         cursor.addRest()
 
         return { success: true }
-    }
-
-    function cmdAddChord(cmd) {
-        var cursor = curScore.newCursor()
-        cursor.track = cmd.track || 0
-        cursor.rewind(0)
-
-        if (cmd.measure !== undefined) {
-            for (var i = 0; i < cmd.measure; i++) {
-                cursor.nextMeasure()
-            }
-        }
-
-        cursor.setDuration(cmd.duration || 480, 1)
-
-        // Add first note
-        cursor.addNote(cmd.pitches[0])
-
-        // Add remaining notes to chord
-        if (cursor.element && cursor.element.type === Element.CHORD) {
-            for (var i = 1; i < cmd.pitches.length; i++) {
-                cursor.addNote(cmd.pitches[i], true)  // true = add to chord
-            }
-        }
-
-        return { success: true }
-    }
-
-    function cmdSetCursor(cmd) {
-        // This is mainly for tracking state - actual cursor is per-operation
-        return { success: true, measure: cmd.measure, beat: cmd.beat, track: cmd.track }
     }
 
     function cmdAddDynamic(cmd) {
@@ -407,11 +498,7 @@ MuseScore {
             }
         }
 
-        var textType = Element.STAFF_TEXT
-        if (cmd.textType === "system") textType = Element.SYSTEM_TEXT
-        else if (cmd.textType === "lyrics") textType = Element.LYRICS
-
-        var text = newElement(textType)
+        var text = newElement(Element.STAFF_TEXT)
         text.text = cmd.text || ""
         cursor.add(text)
 
@@ -419,130 +506,27 @@ MuseScore {
     }
 
     function cmdTranspose(cmd) {
-        cmd("select-all")
         var semitones = cmd.semitones || 0
-        var direction = semitones > 0 ? "transpose-up" : "transpose-down"
+        var dir = semitones > 0 ? "transpose-up" : "transpose-down"
         for (var i = 0; i < Math.abs(semitones); i++) {
-            cmd(direction)
+            cmd(dir)
         }
         return { success: true }
     }
 
-    function cmdDeleteSelection(cmd) {
-        cmd("delete")
-        return { success: true }
+    // === LOGGING ===
+
+    function log(msg) {
+        var time = new Date().toLocaleTimeString()
+        logText.text += "[" + time + "] " + msg + "\n"
     }
 
-    function cmdSelectRange(cmd) {
-        // Selection is complex in MuseScore - simplified version
-        var cursor = curScore.newCursor()
-        cursor.rewind(0)
-        for (var i = 0; i < (cmd.startMeasure || 0); i++) {
-            cursor.nextMeasure()
-        }
-        // Full selection requires more complex API calls
-        return { success: true, note: "Selection is limited in plugin API" }
-    }
-
-    // === SCORE INFO ===
-
-    function sendScoreInfo() {
-        if (!curScore) {
-            sendResponse({ type: "score_info", data: null })
-            return
-        }
-
-        var info = {
-            title: curScore.title || "Untitled",
-            composer: curScore.composer || "",
-            measures: curScore.nmeasures,
-            staves: curScore.nstaves,
-            parts: [],
-            timeSignature: null,
-            keySignature: null,
-            tempo: null
-        }
-
-        // Get parts info
-        for (var i = 0; i < curScore.parts.length; i++) {
-            var part = curScore.parts[i]
-            info.parts.push({
-                name: part.longName || part.shortName || "Part " + (i+1),
-                instrument: part.instrumentId || ""
-            })
-        }
-
-        // Get time/key signature
-        try {
-            var cursor = curScore.newCursor()
-            cursor.rewind(0)
-            if (cursor.timeSignature) {
-                info.timeSignature = {
-                    numerator: cursor.timeSignature.numerator,
-                    denominator: cursor.timeSignature.denominator
-                }
-            }
-            if (cursor.keySignature !== undefined) {
-                info.keySignature = cursor.keySignature
-            }
-        } catch (e) {}
-
-        sendResponse({ type: "score_info", data: info })
-    }
-
-    function sendSelectionInfo() {
-        if (!curScore || !curScore.selection) {
-            sendResponse({ type: "selection_info", data: null })
-            return
-        }
-
-        var sel = curScore.selection
-        var info = {
-            isRange: sel.isRange,
-            startTick: sel.startSegment ? sel.startSegment.tick : 0,
-            endTick: sel.endSegment ? sel.endSegment.tick : 0,
-            elements: []
-        }
-
-        // Get selected elements
-        var elements = sel.elements
-        for (var i = 0; i < elements.length && i < 100; i++) {
-            var el = elements[i]
-            info.elements.push({
-                type: el.type,
-                name: el.name
-            })
-        }
-
-        sendResponse({ type: "selection_info", data: info })
-    }
-
-    // === COMMUNICATION ===
-
-    function sendResponse(obj) {
-        var msg = JSON.stringify(obj)
-        if (clientSocket.status === WebSocket.Open) {
-            clientSocket.sendTextMessage(msg)
-        }
-        // Server mode would need different handling
-    }
-
-    function sendCommand(obj) {
-        sendResponse(obj)
-    }
-
-    function logMessage(msg) {
-        var timestamp = new Date().toLocaleTimeString()
-        logText.text += "[" + timestamp + "] " + msg + "\n"
-        // Auto-scroll would be nice here
-    }
-
-    // Update score info when score changes
+    // Update score info display
     onScoreStateChanged: {
         if (curScore) {
-            scoreInfo.text = curScore.title || "Untitled"
+            scoreTitle.text = curScore.title || "Untitled"
         } else {
-            scoreInfo.text = "No score open"
+            scoreTitle.text = "No score open"
         }
     }
 }

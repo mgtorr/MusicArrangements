@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 LLM Bridge Server - The "Brain" middleware
-Connects to MuseScore plugin via WebSocket and processes LLM requests
+Connects to MuseScore plugin via HTTP polling
 """
 
 import asyncio
@@ -10,9 +10,8 @@ import logging
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, asdict
 from enum import Enum
-
-import websockets
-from websockets.server import WebSocketServerProtocol
+from http.server import BaseHTTPRequestHandler
+import io
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -21,7 +20,6 @@ logger = logging.getLogger(__name__)
 
 class ConnectionState(Enum):
     DISCONNECTED = "disconnected"
-    CONNECTING = "connecting"
     CONNECTED = "connected"
 
 
@@ -59,61 +57,184 @@ class AtomicCommand:
 
 
 class MuseScoreBridge:
-    """Bridge between LLM and MuseScore plugin"""
+    """Bridge between LLM and MuseScore plugin via HTTP"""
 
     def __init__(self, host: str = "localhost", port: int = 8766):
         self.host = host
         self.port = port
         self.state = ConnectionState.DISCONNECTED
-        self.musescore_ws: Optional[WebSocketServerProtocol] = None
         self.score_info: Optional[ScoreInfo] = None
-        self.pending_responses: Dict[str, asyncio.Future] = {}
+        self.pending_commands: List[Dict] = []
+        self.last_results: Dict = {}
         self.command_id = 0
 
     async def start_server(self):
-        """Start the WebSocket server"""
-        logger.info(f"Starting LLM Bridge Server on ws://{self.host}:{self.port}")
-        async with websockets.serve(self._handle_connection, self.host, self.port):
-            await asyncio.Future()  # Run forever
+        """Start the HTTP server"""
+        server = await asyncio.start_server(
+            self._handle_connection,
+            self.host,
+            self.port
+        )
+        logger.info(f"Starting LLM Bridge HTTP Server on http://{self.host}:{self.port}")
+        async with server:
+            await server.serve_forever()
 
-    async def _handle_connection(self, websocket: WebSocketServerProtocol):
-        """Handle incoming WebSocket connection from MuseScore plugin"""
-        logger.info(f"New connection from {websocket.remote_address}")
-        self.musescore_ws = websocket
-        self.state = ConnectionState.CONNECTED
-
+    async def _handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        """Handle incoming HTTP connection"""
         try:
-            async for message in websocket:
-                await self._handle_message(message)
-        except websockets.exceptions.ConnectionClosed:
-            logger.info("MuseScore plugin disconnected")
+            # Read request line
+            request_line = await reader.readline()
+            if not request_line:
+                return
+
+            request_line = request_line.decode('utf-8').strip()
+            parts = request_line.split(' ')
+            if len(parts) < 2:
+                return
+
+            method = parts[0]
+            path = parts[1]
+
+            # Read headers
+            headers = {}
+            content_length = 0
+            while True:
+                line = await reader.readline()
+                if line == b'\r\n' or line == b'\n' or not line:
+                    break
+                line = line.decode('utf-8').strip()
+                if ':' in line:
+                    key, value = line.split(':', 1)
+                    headers[key.strip().lower()] = value.strip()
+                    if key.strip().lower() == 'content-length':
+                        content_length = int(value.strip())
+
+            # Read body if present
+            body = b''
+            if content_length > 0:
+                body = await reader.read(content_length)
+
+            # Route request
+            response = await self._route_request(method, path, body, headers)
+
+            # Send response
+            writer.write(response.encode('utf-8'))
+            await writer.drain()
+
+        except Exception as e:
+            logger.error(f"Error handling request: {e}")
         finally:
-            self.musescore_ws = None
-            self.state = ConnectionState.DISCONNECTED
+            writer.close()
+            await writer.wait_closed()
 
-    async def _handle_message(self, message: str):
-        """Handle message from MuseScore plugin"""
+    async def _route_request(self, method: str, path: str, body: bytes, headers: Dict) -> str:
+        """Route HTTP request to appropriate handler"""
+
+        # CORS headers for all responses
+        cors_headers = (
+            "Access-Control-Allow-Origin: *\r\n"
+            "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+            "Access-Control-Allow-Headers: Content-Type\r\n"
+        )
+
+        # Handle CORS preflight
+        if method == "OPTIONS":
+            return f"HTTP/1.1 200 OK\r\n{cors_headers}Content-Length: 0\r\n\r\n"
+
+        if method == "GET" and path == "/ping":
+            return self._handle_ping(cors_headers)
+
+        elif method == "GET" and path == "/poll":
+            return self._handle_poll(cors_headers)
+
+        elif method == "POST" and path == "/score_info":
+            return await self._handle_score_info(body, cors_headers)
+
+        elif method == "POST" and path == "/results":
+            return self._handle_results(body, cors_headers)
+
+        else:
+            return f"HTTP/1.1 404 Not Found\r\n{cors_headers}Content-Length: 0\r\n\r\n"
+
+    def _handle_ping(self, cors_headers: str) -> str:
+        """Handle ping request - used for connection check"""
+        self.state = ConnectionState.CONNECTED
+        response_body = json.dumps({"status": "ok", "version": "2.0.0"})
+        return (
+            f"HTTP/1.1 200 OK\r\n"
+            f"{cors_headers}"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: {len(response_body)}\r\n"
+            f"\r\n"
+            f"{response_body}"
+        )
+
+    def _handle_poll(self, cors_headers: str) -> str:
+        """Handle poll request - return pending commands"""
+        commands = self.pending_commands.copy()
+        self.pending_commands.clear()
+
+        response_body = json.dumps({"commands": commands})
+        return (
+            f"HTTP/1.1 200 OK\r\n"
+            f"{cors_headers}"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: {len(response_body)}\r\n"
+            f"\r\n"
+            f"{response_body}"
+        )
+
+    async def _handle_score_info(self, body: bytes, cors_headers: str) -> str:
+        """Handle score_info POST - receive score info from plugin"""
         try:
-            data = json.loads(message)
-            msg_type = data.get("type", "")
-            logger.debug(f"Received: {msg_type}")
+            data = json.loads(body.decode('utf-8'))
+            self._update_score_info(data)
+            response_body = json.dumps({"status": "ok"})
+            return (
+                f"HTTP/1.1 200 OK\r\n"
+                f"{cors_headers}"
+                f"Content-Type: application/json\r\n"
+                f"Content-Length: {len(response_body)}\r\n"
+                f"\r\n"
+                f"{response_body}"
+            )
+        except Exception as e:
+            logger.error(f"Error parsing score info: {e}")
+            response_body = json.dumps({"status": "error", "message": str(e)})
+            return (
+                f"HTTP/1.1 400 Bad Request\r\n"
+                f"{cors_headers}"
+                f"Content-Type: application/json\r\n"
+                f"Content-Length: {len(response_body)}\r\n"
+                f"\r\n"
+                f"{response_body}"
+            )
 
-            if msg_type == "handshake":
-                logger.info(f"MuseScore plugin connected: v{data.get('version', '?')}")
-                await self.request_score_info()
-
-            elif msg_type == "score_info":
-                self._update_score_info(data.get("data"))
-
-            elif msg_type == "command_result":
-                # Handle async command result
-                pass
-
-            elif msg_type == "pong":
-                logger.debug("Pong received")
-
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON: {e}")
+    def _handle_results(self, body: bytes, cors_headers: str) -> str:
+        """Handle results POST - receive execution results from plugin"""
+        try:
+            data = json.loads(body.decode('utf-8'))
+            self.last_results = data
+            logger.info(f"Received results: {data}")
+            response_body = json.dumps({"status": "ok"})
+            return (
+                f"HTTP/1.1 200 OK\r\n"
+                f"{cors_headers}"
+                f"Content-Type: application/json\r\n"
+                f"Content-Length: {len(response_body)}\r\n"
+                f"\r\n"
+                f"{response_body}"
+            )
+        except Exception as e:
+            response_body = json.dumps({"status": "error", "message": str(e)})
+            return (
+                f"HTTP/1.1 400 Bad Request\r\n"
+                f"{cors_headers}"
+                f"Content-Type: application/json\r\n"
+                f"Content-Length: {len(response_body)}\r\n"
+                f"\r\n"
+                f"{response_body}"
+            )
 
     def _update_score_info(self, data: Optional[Dict]):
         """Update cached score information"""
@@ -133,47 +254,26 @@ class MuseScoreBridge:
             self.score_info = None
             logger.info("No score open")
 
-    async def send_command(self, command: AtomicCommand) -> bool:
-        """Send a single command to MuseScore"""
-        if not self.musescore_ws:
-            logger.error("Not connected to MuseScore")
-            return False
+    def queue_command(self, command: AtomicCommand):
+        """Queue a command to be sent to MuseScore on next poll"""
+        self.pending_commands.append(command.to_dict())
+        logger.info(f"Queued command: {command.type}")
 
-        try:
-            await self.musescore_ws.send(json.dumps(command.to_dict()))
-            return True
-        except Exception as e:
-            logger.error(f"Failed to send command: {e}")
-            return False
+    def queue_commands(self, commands: List[AtomicCommand]):
+        """Queue multiple commands"""
+        for cmd in commands:
+            self.pending_commands.append(cmd.to_dict())
+        logger.info(f"Queued {len(commands)} commands")
+
+    async def send_command(self, command: AtomicCommand) -> bool:
+        """Queue a single command (for compatibility with old API)"""
+        self.queue_command(command)
+        return True
 
     async def send_commands(self, commands: List[AtomicCommand]) -> bool:
-        """Send a batch of commands to MuseScore"""
-        if not self.musescore_ws:
-            logger.error("Not connected to MuseScore")
-            return False
-
-        try:
-            batch = {
-                "type": "execute",
-                "commands": [cmd.to_dict() for cmd in commands]
-            }
-            await self.musescore_ws.send(json.dumps(batch))
-            return True
-        except Exception as e:
-            logger.error(f"Failed to send commands: {e}")
-            return False
-
-    async def request_score_info(self):
-        """Request current score info from MuseScore"""
-        if self.musescore_ws:
-            await self.musescore_ws.send(json.dumps({"type": "get_score_info"}))
-
-    async def ping(self) -> bool:
-        """Ping the MuseScore plugin"""
-        if self.musescore_ws:
-            await self.musescore_ws.send(json.dumps({"type": "ping"}))
-            return True
-        return False
+        """Queue a batch of commands (for compatibility with old API)"""
+        self.queue_commands(commands)
+        return True
 
     # === HIGH-LEVEL COMMANDS ===
 
