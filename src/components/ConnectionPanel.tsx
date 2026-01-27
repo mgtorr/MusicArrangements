@@ -6,6 +6,7 @@ export function ConnectionPanel() {
   const { connected, serverPort, setServerPort, setConnected, addLog } =
     useAppStore();
   const [loading, setLoading] = useState(false);
+  const [serverType, setServerType] = useState<"websocket" | "http">("websocket");
 
   const handleConnect = async () => {
     setLoading(true);
@@ -19,10 +20,10 @@ export function ConnectionPanel() {
           addLog(`Error: ${result.error}`);
         }
       } else {
-        const result = await startServer(serverPort);
+        const result = await startServer(serverPort, serverType);
         if (result.success) {
           setConnected(true);
-          addLog(`Server started on port ${serverPort}`);
+          addLog(`${serverType === "websocket" ? "WebSocket" : "HTTP"} server started on port ${serverPort}`);
         } else {
           addLog(`Error: ${result.error}`);
         }
@@ -60,6 +61,27 @@ export function ConnectionPanel() {
           </span>
         </div>
 
+        {/* Server type selector */}
+        <div>
+          <label className="block text-sm text-gray-400 mb-1">
+            Server Type
+          </label>
+          <select
+            className="input"
+            value={serverType}
+            onChange={(e) => {
+              const type = e.target.value as "websocket" | "http";
+              setServerType(type);
+              // Set default port based on type
+              setServerPort(type === "websocket" ? 8765 : 8766);
+            }}
+            disabled={connected}
+          >
+            <option value="websocket">WebSocket (recommended)</option>
+            <option value="http">HTTP Polling</option>
+          </select>
+        </div>
+
         {/* Port input */}
         <div>
           <label className="block text-sm text-gray-400 mb-1">
@@ -69,7 +91,7 @@ export function ConnectionPanel() {
             type="number"
             className="input"
             value={serverPort}
-            onChange={(e) => setServerPort(parseInt(e.target.value) || 8766)}
+            onChange={(e) => setServerPort(parseInt(e.target.value) || 8765)}
             disabled={connected}
           />
         </div>
@@ -98,8 +120,10 @@ export function ConnectionPanel() {
 
         {/* Instructions */}
         <p className="text-xs text-gray-500">
-          Start the server, then connect from MuseScore using the LLM Bridge
-          plugin.
+          {serverType === "websocket"
+            ? "WebSocket mode provides real-time bidirectional communication."
+            : "HTTP mode uses polling (legacy, for compatibility)."
+          }
         </p>
       </div>
     </div>

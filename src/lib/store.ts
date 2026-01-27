@@ -58,7 +58,7 @@ interface AppState {
 export const useAppStore = create<AppState>((set) => ({
   // Connection state
   connected: false,
-  serverPort: 8766,
+  serverPort: 8765, // Default WebSocket port
   setConnected: (connected) => set({ connected }),
   setServerPort: (serverPort) => set({ serverPort }),
 

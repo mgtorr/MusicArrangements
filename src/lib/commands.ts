@@ -15,8 +15,9 @@ export interface CommandResult {
 }
 
 // Start the bridge server
-export async function startServer(port: number): Promise<CommandResult> {
-  return await invoke("start_server", { port });
+// serverType: "websocket" (default) or "http"
+export async function startServer(port: number, serverType: string = "websocket"): Promise<CommandResult> {
+  return await invoke("start_server", { port, serverType });
 }
 
 // Stop the bridge server

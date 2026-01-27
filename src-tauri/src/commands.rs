@@ -4,14 +4,86 @@ use crate::llm::{LLMInterpreter, LLMProvider};
 use crate::music::{DrumStyle, MusicGenerator};
 use crate::types::{CommandResult, ProcessResult, ServerStatus};
 use crate::validator::CommandValidator;
+use crate::ws_bridge::WsBridgeServer;
 use parking_lot::RwLock;
 use std::sync::Arc;
 use tauri::State;
 use tracing::{debug, error, info};
 
+/// Server type enum
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ServerType {
+    Http,
+    WebSocket,
+}
+
+/// Bridge server wrapper that can be either HTTP or WebSocket
+pub enum BridgeWrapper {
+    Http(BridgeServer),
+    WebSocket(WsBridgeServer),
+}
+
+impl BridgeWrapper {
+    pub fn is_running(&self) -> bool {
+        match self {
+            BridgeWrapper::Http(s) => s.is_running(),
+            BridgeWrapper::WebSocket(s) => s.is_running(),
+        }
+    }
+
+    pub fn is_connected(&self) -> bool {
+        match self {
+            BridgeWrapper::Http(s) => s.is_connected(),
+            BridgeWrapper::WebSocket(s) => s.is_connected(),
+        }
+    }
+
+    pub fn port(&self) -> u16 {
+        match self {
+            BridgeWrapper::Http(s) => s.port(),
+            BridgeWrapper::WebSocket(s) => s.port(),
+        }
+    }
+
+    pub fn stop(&self) {
+        match self {
+            BridgeWrapper::Http(s) => s.stop(),
+            BridgeWrapper::WebSocket(s) => s.stop(),
+        }
+    }
+
+    pub fn get_score_info(&self) -> Option<crate::types::ScoreInfo> {
+        match self {
+            BridgeWrapper::Http(s) => s.get_score_info(),
+            BridgeWrapper::WebSocket(s) => s.get_score_info(),
+        }
+    }
+
+    pub fn queue_raw_commands(&self, cmds: Vec<serde_json::Value>) {
+        match self {
+            BridgeWrapper::Http(s) => s.queue_raw_commands(cmds),
+            BridgeWrapper::WebSocket(s) => s.queue_raw_commands(cmds),
+        }
+    }
+
+    pub fn queue_commands(&self, cmds: Vec<crate::types::AtomicCommand>) {
+        match self {
+            BridgeWrapper::Http(s) => s.queue_commands(cmds),
+            BridgeWrapper::WebSocket(s) => s.queue_commands(cmds),
+        }
+    }
+
+    pub fn server_type(&self) -> &'static str {
+        match self {
+            BridgeWrapper::Http(_) => "http",
+            BridgeWrapper::WebSocket(_) => "websocket",
+        }
+    }
+}
+
 /// Application state managed by Tauri
 pub struct AppState {
-    bridge: Arc<RwLock<Option<BridgeServer>>>,
+    bridge: Arc<RwLock<Option<BridgeWrapper>>>,
     interpreter: Arc<RwLock<LLMInterpreter>>,
     validator: CommandValidator,
     config: Arc<RwLock<Config>>,
@@ -42,9 +114,10 @@ impl Default for AppState {
     }
 }
 
-/// Start the HTTP bridge server
+/// Start the bridge server (HTTP or WebSocket based on server_type)
+/// server_type: "http" for HTTP polling (port 8766), "websocket" for WebSocket (port 8765)
 #[tauri::command]
-pub fn start_server(state: State<AppState>, port: u16) -> CommandResult {
+pub fn start_server(state: State<AppState>, port: u16, server_type: Option<String>) -> CommandResult {
     let mut bridge_guard = state.bridge.write();
 
     // Stop existing server if running
@@ -54,22 +127,42 @@ pub fn start_server(state: State<AppState>, port: u16) -> CommandResult {
         }
     }
 
-    // Create and start new server
-    let bridge = BridgeServer::new(port);
-    match bridge.start() {
-        Ok(_) => {
-            info!("Server started on port {}", port);
-            *bridge_guard = Some(bridge);
-            CommandResult::ok(format!("Server started on port {}", port))
+    let stype = server_type.as_deref().unwrap_or("websocket");
+
+    match stype {
+        "http" => {
+            let bridge = BridgeServer::new(port);
+            match bridge.start() {
+                Ok(_) => {
+                    info!("HTTP server started on port {}", port);
+                    *bridge_guard = Some(BridgeWrapper::Http(bridge));
+                    CommandResult::ok(format!("HTTP server started on port {}", port))
+                }
+                Err(e) => {
+                    error!("Failed to start HTTP server: {}", e);
+                    CommandResult::err(e)
+                }
+            }
         }
-        Err(e) => {
-            error!("Failed to start server: {}", e);
-            CommandResult::err(e)
+        "websocket" | "ws" => {
+            let bridge = WsBridgeServer::new(port);
+            match bridge.start() {
+                Ok(_) => {
+                    info!("WebSocket server started on port {}", port);
+                    *bridge_guard = Some(BridgeWrapper::WebSocket(bridge));
+                    CommandResult::ok(format!("WebSocket server started on port {}", port))
+                }
+                Err(e) => {
+                    error!("Failed to start WebSocket server: {}", e);
+                    CommandResult::err(e)
+                }
+            }
         }
+        _ => CommandResult::err(format!("Unknown server type: {}. Use 'http' or 'websocket'", stype)),
     }
 }
 
-/// Stop the HTTP bridge server
+/// Stop the bridge server
 #[tauri::command]
 pub fn stop_server(state: State<AppState>) -> CommandResult {
     let mut bridge_guard = state.bridge.write();
@@ -99,7 +192,7 @@ pub fn get_server_status(state: State<AppState>) -> ServerStatus {
         ServerStatus {
             running: false,
             connected: false,
-            port: 8766,
+            port: 8765,
         }
     }
 }

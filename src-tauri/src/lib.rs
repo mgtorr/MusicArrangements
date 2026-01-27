@@ -5,6 +5,7 @@ mod llm;
 mod music;
 mod types;
 mod validator;
+mod ws_bridge;
 
 use tauri::Manager;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
