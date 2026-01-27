@@ -1,48 +1,61 @@
-# MuseScore LLM Bridge
+# Muse AI Sidecar
 
-AI-powered music arrangement for MuseScore using the "Bridge" architecture.
+AI-powered music arrangement desktop application for MuseScore, built with Tauri and React.
 
 ## Architecture
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│   MuseScore     │────▶│  Python Server   │────▶│      LLM        │
-│   QML Plugin    │◀────│   (Middleware)   │◀────│ (Claude/Gemini) │
-│   "The Ear"     │     │   "The Brain"    │     │                 │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-     WebSocket              Music21                   API
+┌─────────────────┐     ┌──────────────────────────┐     ┌─────────────────┐
+│   MuseScore     │────▶│   Muse AI Sidecar        │────▶│      LLM        │
+│   QML Plugin    │◀────│   (Tauri/React Desktop)  │◀────│ (Claude/Gemini) │
+│   "The Ear"     │     │   "The Brain"            │     │                 │
+└─────────────────┘     └──────────────────────────┘     └─────────────────┘
+     HTTP Polling              Rust Backend                    API
 ```
 
 ### Components
 
 1. **The Ear** (MuseScore Plugin)
-   - QML plugin that listens for commands via WebSocket
+   - QML plugin that polls for commands via HTTP
    - Executes atomic commands on the score
-   - Reports score state back to server
+   - Reports score state back to sidecar
 
-2. **The Brain** (Python Middleware)
-   - Receives natural language requests
-   - Uses LLM to interpret intent
-   - Uses Music21 for musical calculations
-   - Validates commands before sending
-   - Sends atomic commands to plugin
+2. **The Brain** (Tauri Desktop App)
+   - Modern React UI for interaction
+   - Rust backend for HTTP bridge server
+   - LLM integration (Claude, Gemini, OpenAI)
+   - Music generation and command validation
 
 3. **The Translator** (LLM)
    - Interprets natural language requests
    - Generates structured commands
    - Understands musical concepts
 
+## Features
+
+- Natural language to music commands
+- Walking bass line generation
+- Drum pattern generation (rock, jazz, pop, latin, metal)
+- Support for multiple LLM providers
+- Real-time score information display
+- Cross-platform desktop application
+
 ## Installation
 
-### 1. Install Python Server
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) 18+
+- [Rust](https://rustup.rs/) 1.70+
+- [MuseScore 4](https://musescore.org/)
+
+### 1. Clone and Install
 
 ```bash
+git clone <repository>
 cd MusicArrangements
-pip install -r requirements.txt
 
-# Copy and edit config
-cp server/config.example.json server/config.json
-# Edit config.json with your API key
+# Install dependencies
+npm install
 ```
 
 ### 2. Install MuseScore Plugin
@@ -57,29 +70,33 @@ Enable in MuseScore: Plugins → Plugin Manager → LLM Bridge
 
 ### 3. Configure API Key
 
-Set environment variable:
+Launch the app and go to Settings to configure your LLM provider and API key.
+
+Or set environment variables:
 ```bash
 export LLM_API_KEY="your-api-key"
 export LLM_PROVIDER="claude"  # or "gemini" or "openai"
 ```
 
-Or edit `server/config.json`:
-```json
-{
-    "provider": "claude",
-    "api_key": "sk-ant-...",
-    "model": "claude-sonnet-4-20250514"
-}
+## Development
+
+### Run in Development Mode
+
+```bash
+npm run tauri:dev
+```
+
+### Build for Production
+
+```bash
+npm run tauri:build
 ```
 
 ## Usage
 
-### 1. Start the Server
+### 1. Start the Application
 
-```bash
-cd MusicArrangements/server
-python main.py
-```
+Launch Muse AI Sidecar and click "Start Server" to begin listening for MuseScore connections.
 
 ### 2. Connect MuseScore
 
@@ -90,23 +107,18 @@ python main.py
 
 ### 3. Send Commands
 
-In the server terminal:
+Type natural language requests in the chat panel:
 ```
->>> Add a C major chord at the beginning
->>> Add walking bass in G major
->>> Transpose up a perfect fifth
->>> Add rock drum pattern for 4 measures
+Add a C major chord at the beginning
+Add walking bass in G major for 4 measures
+Transpose up a perfect fifth
+Add rock drum pattern for 4 measures
 ```
 
-Or use built-in music logic:
+Or use slash commands:
 ```
->>> /bass
-Chords (e.g., G C D G): G C D G
-Measures: 4
-
->>> /drums
-Style (rock/jazz/pop/latin/metal): jazz
-Measures: 8
+/bass C G Am F 4    (chords followed by measures)
+/drums rock 4       (style followed by measures)
 ```
 
 ## Atomic Commands
@@ -152,48 +164,47 @@ Eighth = 240
 ## Project Structure
 
 ```
-MusicArrangements/
+muse-ai-sidecar/
+├── src/                    # React frontend
+│   ├── components/         # UI components
+│   ├── lib/               # State and commands
+│   └── styles/            # CSS/Tailwind
+├── src-tauri/             # Rust backend
+│   └── src/
+│       ├── bridge.rs      # HTTP bridge server
+│       ├── llm.rs         # LLM interpreters
+│       ├── music.rs       # Music generation
+│       ├── validator.rs   # Command validation
+│       └── commands.rs    # Tauri commands
 ├── plugin/
 │   └── LLMBridge.qml      # MuseScore plugin
-├── server/
-│   ├── main.py            # Main server entry point
-│   ├── bridge_server.py   # WebSocket bridge
-│   ├── llm_interpreter.py # LLM integration
-│   ├── music_logic.py     # Music21 calculations
-│   ├── validator.py       # Command validation
-│   └── config.json        # Configuration
-├── schemas/               # Command schemas
-├── requirements.txt
+├── package.json
 └── README.md
 ```
 
 ## Troubleshooting
 
 ### Plugin shows "Disconnected"
-- Ensure Python server is running (`python main.py`)
+- Ensure Muse AI Sidecar is running with server started
 - Check that port 8766 is not blocked
 
 ### LLM errors
-- Verify API key is correct
+- Verify API key is correct in Settings
 - Check provider name matches key type
 - Try a different model
 
 ### Commands not executing
 - Check MuseScore console for errors
-- Verify score is open
-- Check command validation errors in server output
+- Verify score is open in MuseScore
+- Check log panel for validation errors
 
-## Development
+## Tech Stack
 
-### Adding New Commands
-
-1. Add command handler in `plugin/LLMBridge.qml`
-2. Add command schema in `server/llm_interpreter.py`
-3. Add validation in `server/validator.py`
-
-### Adding Music Logic
-
-Add functions to `server/music_logic.py` using Music21.
+- **Frontend**: React, TypeScript, Tailwind CSS
+- **Backend**: Rust, Tauri 2.0
+- **Build**: Vite
+- **State**: Zustand
+- **LLM**: Claude, Gemini, OpenAI APIs
 
 ## License
 

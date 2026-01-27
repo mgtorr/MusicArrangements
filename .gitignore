@@ -1,10 +1,26 @@
-# Python cache
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
+# Dependencies
+node_modules/
+.pnpm-store/
 
-# OS generated files
+# Build outputs
+dist/
+dist-ssr/
+build/
+*.local
+
+# Tauri
+src-tauri/target/
+src-tauri/WixTools/
+src-tauri/Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
 .DS_Store
 .DS_Store?
 ._*
@@ -13,35 +29,40 @@ __pycache__/
 ehthumbs.db
 Thumbs.db
 
-# IDE files
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs/
 
-# Node modules (if any)
-node_modules/
-
-# Build outputs
-build/
-dist/
-
-# API keys and secrets
+# Environment and secrets
 .env
 .env.local
+.env.*.local
 *.key
 secrets.json
 config.local.json
 
-# Logs
-*.log
-logs/
+# Testing
+coverage/
+*.lcov
+
+# Python (legacy)
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.so
+.venv/
+venv/
 
 # Temporary files
 tmp/
 temp/
 *.tmp
+*.temp
+backup/
 
 # MuseScore backup files
 *.mscz~

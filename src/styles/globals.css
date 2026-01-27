@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #e5e5e5;
+  background-color: #1e1e1e;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1e1e1e;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #4a4a4a;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #5a5a5a;
+}
+
+@layer components {
+  .btn {
+    @apply px-4 py-2 rounded-lg font-medium transition-colors duration-200;
+  }
+
+  .btn-primary {
+    @apply bg-accent text-white hover:bg-accent-hover;
+  }
+
+  .btn-secondary {
+    @apply bg-surface-elevated text-gray-300 hover:bg-surface-hover;
+  }
+
+  .btn-danger {
+    @apply bg-error text-white hover:bg-red-600;
+  }
+
+  .input {
+    @apply w-full px-3 py-2 bg-surface-elevated border border-gray-600 rounded-lg
+           text-white placeholder-gray-400 focus:outline-none focus:border-accent;
+  }
+
+  .card {
+    @apply bg-surface-elevated rounded-lg p-4;
+  }
+}

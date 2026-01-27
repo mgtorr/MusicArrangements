@@ -1,7 +1,0 @@
-# LLM Bridge Server Requirements
-websockets>=12.0
-httpx>=0.25.0
-music21>=9.1.0
-
-# Optional: for better async support
-# uvloop>=0.19.0  # Linux/macOS only
