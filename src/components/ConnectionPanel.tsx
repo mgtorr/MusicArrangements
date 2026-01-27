@@ -45,86 +45,60 @@ export function ConnectionPanel() {
   };
 
   return (
-    <div className="card">
-      <h2 className="text-lg font-semibold text-white mb-4">Connection</h2>
+    <div className="flex items-center gap-4">
+      {/* Status indicator */}
+      <div className="flex items-center gap-2 flex-shrink-0">
+        <div
+          className={`w-2.5 h-2.5 rounded-full ${
+            connected ? "bg-success animate-pulse" : "bg-error"
+          }`}
+        />
+        <span className="text-sm text-gray-300">
+          {connected ? "Connected" : "Disconnected"}
+        </span>
+      </div>
 
-      <div className="space-y-4">
-        {/* Status indicator */}
-        <div className="flex items-center gap-2">
-          <div
-            className={`w-3 h-3 rounded-full ${
-              connected ? "bg-success" : "bg-error"
-            }`}
-          />
-          <span className="text-sm text-gray-300">
-            {connected ? "Connected to MuseScore" : "Disconnected"}
-          </span>
-        </div>
+      {/* Server type selector */}
+      <select
+        className="input py-1.5 text-sm w-36"
+        value={serverType}
+        onChange={(e) => {
+          const type = e.target.value as "websocket" | "http";
+          setServerType(type);
+          setServerPort(type === "websocket" ? 8765 : 8766);
+        }}
+        disabled={connected}
+      >
+        <option value="websocket">WebSocket</option>
+        <option value="http">HTTP</option>
+      </select>
 
-        {/* Server type selector */}
-        <div>
-          <label className="block text-sm text-gray-400 mb-1">
-            Server Type
-          </label>
-          <select
-            className="input"
-            value={serverType}
-            onChange={(e) => {
-              const type = e.target.value as "websocket" | "http";
-              setServerType(type);
-              // Set default port based on type
-              setServerPort(type === "websocket" ? 8765 : 8766);
-            }}
-            disabled={connected}
-          >
-            <option value="websocket">WebSocket (recommended)</option>
-            <option value="http">HTTP Polling</option>
-          </select>
-        </div>
+      {/* Port input */}
+      <input
+        type="number"
+        className="input py-1.5 text-sm w-20"
+        value={serverPort}
+        onChange={(e) => setServerPort(parseInt(e.target.value) || 8765)}
+        disabled={connected}
+        title="Server port"
+      />
 
-        {/* Port input */}
-        <div>
-          <label className="block text-sm text-gray-400 mb-1">
-            Server Port
-          </label>
-          <input
-            type="number"
-            className="input"
-            value={serverPort}
-            onChange={(e) => setServerPort(parseInt(e.target.value) || 8765)}
-            disabled={connected}
-          />
-        </div>
-
-        {/* Buttons */}
-        <div className="flex gap-2">
-          <button
-            className={`btn flex-1 ${connected ? "btn-danger" : "btn-primary"}`}
-            onClick={handleConnect}
-            disabled={loading}
-          >
-            {loading
-              ? "..."
-              : connected
-              ? "Stop Server"
-              : "Start Server"}
-          </button>
-          <button
-            className="btn btn-secondary"
-            onClick={handleRefresh}
-            title="Refresh status"
-          >
-            &#8635;
-          </button>
-        </div>
-
-        {/* Instructions */}
-        <p className="text-xs text-gray-500">
-          {serverType === "websocket"
-            ? "WebSocket mode provides real-time bidirectional communication."
-            : "HTTP mode uses polling (legacy, for compatibility)."
-          }
-        </p>
+      {/* Buttons */}
+      <div className="flex gap-2 ml-auto">
+        <button
+          className={`btn py-1.5 px-3 text-sm ${connected ? "btn-danger" : "btn-primary"}`}
+          onClick={handleConnect}
+          disabled={loading}
+        >
+          {loading ? "..." : connected ? "Stop" : "Start"}
+        </button>
+        <button
+          className="btn btn-secondary py-1.5 px-2 text-sm"
+          onClick={handleRefresh}
+          title="Refresh status"
+        >
+          &#8635;
+        </button>
       </div>
     </div>
   );

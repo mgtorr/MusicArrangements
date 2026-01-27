@@ -79,6 +79,15 @@ impl BridgeWrapper {
             BridgeWrapper::WebSocket(_) => "websocket",
         }
     }
+
+    pub fn request_score_info(&self) {
+        match self {
+            BridgeWrapper::Http(_) => {
+                // HTTP mode doesn't support push - polling will get it
+            }
+            BridgeWrapper::WebSocket(s) => s.request_score_info(),
+        }
+    }
 }
 
 /// Application state managed by Tauri
@@ -376,6 +385,18 @@ pub fn get_score_info(state: State<AppState>) -> Option<serde_json::Value> {
         .as_ref()
         .and_then(|b| b.get_score_info())
         .map(|s| serde_json::to_value(s).unwrap_or_default())
+}
+
+/// Request score info from the plugin
+#[tauri::command]
+pub fn request_score_info(state: State<AppState>) -> CommandResult {
+    let bridge_guard = state.bridge.read();
+    if let Some(ref bridge) = *bridge_guard {
+        bridge.request_score_info();
+        CommandResult::ok("Score info requested")
+    } else {
+        CommandResult::err("Server not running")
+    }
 }
 
 /// Save configuration

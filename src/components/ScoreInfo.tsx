@@ -1,119 +1,118 @@
 import { useAppStore } from "../lib/store";
+import { requestScoreInfo } from "../lib/commands";
 
 export function ScoreInfo() {
-  const { scoreInfo, connected } = useAppStore();
+  const { scoreInfo, connected, addLog } = useAppStore();
 
   const keySignatureNames: Record<string, string> = {
-    "-7": "Cb Major / Ab minor",
-    "-6": "Gb Major / Eb minor",
-    "-5": "Db Major / Bb minor",
-    "-4": "Ab Major / F minor",
-    "-3": "Eb Major / C minor",
-    "-2": "Bb Major / G minor",
-    "-1": "F Major / D minor",
-    "0": "C Major / A minor",
-    "1": "G Major / E minor",
-    "2": "D Major / B minor",
-    "3": "A Major / F# minor",
-    "4": "E Major / C# minor",
-    "5": "B Major / G# minor",
-    "6": "F# Major / D# minor",
-    "7": "C# Major / A# minor",
+    "-7": "Cb Maj",
+    "-6": "Gb Maj",
+    "-5": "Db Maj",
+    "-4": "Ab Maj",
+    "-3": "Eb Maj",
+    "-2": "Bb Maj",
+    "-1": "F Maj",
+    "0": "C Maj",
+    "1": "G Maj",
+    "2": "D Maj",
+    "3": "A Maj",
+    "4": "E Maj",
+    "5": "B Maj",
+    "6": "F# Maj",
+    "7": "C# Maj",
+  };
+
+  const handleRefresh = async () => {
+    try {
+      await requestScoreInfo();
+      addLog("Requested score info from plugin");
+    } catch (error) {
+      addLog(`Error requesting score info: ${error}`);
+    }
   };
 
   if (!connected) {
     return (
-      <div className="card">
-        <h2 className="text-lg font-semibold text-white mb-4">Score Info</h2>
-        <p className="text-sm text-gray-500">
-          Connect to MuseScore to see score information.
-        </p>
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-white">Score Info</h2>
+        <span className="text-xs text-gray-500">Connect to MuseScore first</span>
       </div>
     );
   }
 
   if (!scoreInfo) {
     return (
-      <div className="card">
-        <h2 className="text-lg font-semibold text-white mb-4">Score Info</h2>
-        <p className="text-sm text-gray-500">
-          No score information received yet. Open a score in MuseScore and click
-          "Send Score Info" in the plugin.
-        </p>
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-white">Score Info</h2>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500">No score loaded</span>
+          <button
+            onClick={handleRefresh}
+            className="text-xs text-accent hover:text-accent-hover"
+          >
+            Refresh
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="card">
-      <h2 className="text-lg font-semibold text-white mb-4">Score Info</h2>
-
-      <div className="space-y-3">
-        <div>
-          <span className="text-xs text-gray-400 block">Title</span>
-          <span className="text-white font-medium">
+    <div>
+      {/* Title row */}
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-3">
+          <h2 className="text-sm font-semibold text-white">
             {scoreInfo.title || "Untitled"}
-          </span>
+          </h2>
+          {scoreInfo.composer && (
+            <span className="text-xs text-gray-400">by {scoreInfo.composer}</span>
+          )}
         </div>
+        <button
+          onClick={handleRefresh}
+          className="text-xs text-gray-400 hover:text-white"
+          title="Refresh score info"
+        >
+          &#8635;
+        </button>
+      </div>
 
-        {scoreInfo.composer && (
-          <div>
-            <span className="text-xs text-gray-400 block">Composer</span>
-            <span className="text-gray-300">{scoreInfo.composer}</span>
-          </div>
-        )}
-
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <span className="text-xs text-gray-400 block">Measures</span>
-            <span className="text-gray-300">{scoreInfo.measures}</span>
-          </div>
-          <div>
-            <span className="text-xs text-gray-400 block">Staves</span>
-            <span className="text-gray-300">{scoreInfo.staves}</span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <span className="text-xs text-gray-400 block">Time Signature</span>
-            <span className="text-gray-300">
-              {scoreInfo.timeSignature
-                ? `${scoreInfo.timeSignature.numerator}/${scoreInfo.timeSignature.denominator}`
-                : "4/4"}
-            </span>
-          </div>
-          <div>
-            <span className="text-xs text-gray-400 block">Key</span>
-            <span className="text-gray-300">
-              {keySignatureNames[scoreInfo.keySignature.toString()] || "C Major"}
-            </span>
-          </div>
-        </div>
-
-        {scoreInfo.parts && scoreInfo.parts.length > 0 && (
-          <div>
-            <span className="text-xs text-gray-400 block">Parts</span>
-            <div className="flex flex-wrap gap-1 mt-1">
-              {scoreInfo.parts.map((part, index) => (
-                <span
-                  key={index}
-                  className="text-xs bg-surface-hover px-2 py-1 rounded text-gray-300"
-                >
-                  {part.name}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-
+      {/* Info chips */}
+      <div className="flex flex-wrap gap-2">
+        <InfoChip label="Measures" value={scoreInfo.measures.toString()} />
+        <InfoChip label="Staves" value={scoreInfo.staves.toString()} />
+        <InfoChip
+          label="Time"
+          value={
+            scoreInfo.timeSignature
+              ? `${scoreInfo.timeSignature.numerator}/${scoreInfo.timeSignature.denominator}`
+              : "4/4"
+          }
+        />
+        <InfoChip
+          label="Key"
+          value={keySignatureNames[scoreInfo.keySignature.toString()] || "C Maj"}
+        />
         {scoreInfo.tempo && (
-          <div>
-            <span className="text-xs text-gray-400 block">Tempo</span>
-            <span className="text-gray-300">{scoreInfo.tempo} BPM</span>
-          </div>
+          <InfoChip label="Tempo" value={`${scoreInfo.tempo} BPM`} />
+        )}
+        {scoreInfo.parts && scoreInfo.parts.length > 0 && (
+          <InfoChip
+            label="Parts"
+            value={scoreInfo.parts.map((p) => p.name).join(", ")}
+          />
         )}
       </div>
+    </div>
+  );
+}
+
+function InfoChip({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="bg-surface-hover px-2 py-1 rounded text-xs">
+      <span className="text-gray-500">{label}: </span>
+      <span className="text-gray-300">{value}</span>
     </div>
   );
 }

@@ -37,6 +37,7 @@ pub fn run() {
             commands::generate_drum_pattern,
             commands::configure_llm,
             commands::get_score_info,
+            commands::request_score_info,
             commands::save_config,
             commands::load_config,
         ])

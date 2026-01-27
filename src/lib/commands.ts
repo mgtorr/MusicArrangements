@@ -71,6 +71,11 @@ export async function getScoreInfo(): Promise<object | null> {
   return await invoke("get_score_info");
 }
 
+// Request score info from the plugin
+export async function requestScoreInfo(): Promise<CommandResult> {
+  return await invoke("request_score_info");
+}
+
 // Save configuration
 export async function saveConfig(config: object): Promise<CommandResult> {
   return await invoke("save_config", { config });
