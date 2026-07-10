@@ -1,6 +1,26 @@
-# MuseScore LLM Bridge
+# MuseScore LLM Bridge - Composition Assistant
 
-AI-powered music arrangement for MuseScore using the "Bridge" architecture.
+AI-powered music arrangement and composition for MuseScore using the "Bridge" architecture with advanced composition assistant capabilities.
+
+## Features
+
+### 🎵 Natural Language Composition
+- **AI-Powered Understanding**: Describe what you want in plain English
+- **Music Theory Intelligence**: LLM understands harmony, voice leading, counterpoint
+- **Style-Specific Composition**: Jazz, Classical, Pop, Rock, Blues, Folk
+
+### 🎼 Advanced Composition Tools
+- **Melody Generation**: Create melodic lines with specified contours and rhythms
+- **Chord Progressions**: Generate progressions in various styles (I-V-vi-IV, ii-V-I, 12-bar blues)
+- **Harmonization**: Add harmonies to melodies (thirds, sixths, full chords)
+- **Voice Leading**: Smooth voice transitions following classical rules
+- **Full Arrangements**: Complete multi-section arrangements with form structure
+
+### 🎹 Built-in Music Logic
+- **Walking Bass Lines**: Automatic bass patterns from chord symbols
+- **Drum Patterns**: Rock, jazz, pop, Latin, metal drum grooves
+- **Form Structure**: Verse-chorus, ABA, AABA, Rondo, Sonata
+- **Instrumentation Suggestions**: Context-aware instrument recommendations
 
 ## Architecture
 
@@ -88,20 +108,43 @@ python main.py
 3. Launch plugin: Plugins → LLM Bridge
 4. Click "Connect to Server"
 
-### 3. Send Commands
+### 3. Compose with Natural Language
 
-In the server terminal:
+In the server terminal, describe what you want:
+
 ```
->>> Add a C major chord at the beginning
->>> Add walking bass in G major
->>> Transpose up a perfect fifth
->>> Add rock drum pattern for 4 measures
+>>> Compose a jazz melody in G major with an arch contour
+>>> Add a ii-V-I progression in C major
+>>> Create a pop verse-chorus arrangement in 16 measures
+>>> Harmonize the melody in thirds
+>>> Add a walking bass line over these chords: Cmaj Amin Fmaj G7
+>>> Generate rock drums for 8 measures
 ```
 
-Or use built-in music logic:
+### 4. Use Built-in Composition Tools
+
+Interactive commands for specific tasks:
+
 ```
+>>> /melody
+Key (e.g., C, G, Dm): G
+Contour (ascending/descending/arch/static): arch
+Number of measures: 8
+Rhythm density (sparse/moderate/dense): moderate
+
+>>> /progression
+Key (e.g., C, G, Am): C  
+Style (pop/jazz/classical/blues/folk): jazz
+Number of measures: 8
+
+>>> /arrange
+Key (e.g., C, G): G
+Style (pop/jazz/rock/classical/blues): pop
+Form (verse_chorus/ABA/AABA): verse_chorus
+Total measures: 16
+
 >>> /bass
-Chords (e.g., G C D G): G C D G
+Chords (e.g., G C D G): G Am F G
 Measures: 4
 
 >>> /drums
@@ -109,7 +152,68 @@ Style (rock/jazz/pop/latin/metal): jazz
 Measures: 8
 ```
 
-## Atomic Commands
+## Example Composition Workflows
+
+### Create a Complete Song
+
+```
+>>> /arrange
+Key: G
+Style: pop
+Form: verse_chorus  
+Total measures: 16
+# Creates verse-chorus structure with progressions
+
+>>> Compose a catchy melody over the chords in measures 0-7
+# LLM generates melodic line
+
+>>> Add harmonization in sixths to the melody
+# Adds harmony voice
+
+>>> /drums
+Style: pop
+Measures: 16
+# Adds drum pattern
+
+>>> Add a simple bass line following the chord roots
+# LLM generates supportive bass
+```
+
+### Jazz Composition
+
+```
+>>> /progression
+Key: Dm
+Style: jazz
+Number of measures: 8
+# Generates ii-V-I style progression with 7th chords
+
+>>> Create a jazz melody with moderate syncopation over these chords
+# LLM generates bebop-style melody
+
+>>> /bass
+Chords: Dm7 G7 Cmaj7 A7 Dm7 G7 Cmaj7 Cmaj7
+Measures: 8
+# Walking bass pattern
+
+>>> /drums  
+Style: jazz
+Measures: 8
+# Swing drum pattern with ride cymbal
+```
+
+### Classical Arrangement
+
+```
+>>> Create a classical ABA form arrangement in C major, 24 measures
+# Full classical structure
+
+>>> Compose a lyrical melody in the style of Mozart
+# Elegant classical melody
+
+>>> Add classical string harmonization with proper voice leading
+# 4-part harmony following voice leading rules
+```
 
 The system uses these atomic commands:
 

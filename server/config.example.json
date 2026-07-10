@@ -2,10 +2,35 @@
     "provider": "claude",
     "api_key": "YOUR_API_KEY_HERE",
     "model": "claude-sonnet-4-20250514",
+    
     "_comment": "Supported providers: claude, gemini, openai",
+    "_note": "The composition assistant uses advanced prompts optimized for music theory",
+    
     "_models": {
-        "claude": ["claude-sonnet-4-20250514", "claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"],
-        "gemini": ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-pro"],
-        "openai": ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"]
+        "claude": [
+            "claude-sonnet-4-20250514",
+            "claude-3-5-sonnet-20241022",
+            "claude-3-haiku-20240307"
+        ],
+        "gemini": [
+            "gemini-2.0-flash",
+            "gemini-1.5-pro", 
+            "gemini-pro"
+        ],
+        "openai": [
+            "gpt-4o",
+            "gpt-4-turbo",
+            "gpt-3.5-turbo"
+        ]
+    },
+    
+    "_composition_features": {
+        "melody_generation": "Create melodies with contour and rhythm control",
+        "chord_progressions": "Generate progressions in pop, jazz, classical, blues, folk styles",
+        "harmonization": "Add harmonies following voice leading rules",
+        "arrangements": "Full multi-section arrangements with form structure",
+        "bass_lines": "Walking bass, rock bass, funk bass patterns",
+        "drum_patterns": "Rock, jazz, pop, latin, metal grooves"
     }
 }
+
