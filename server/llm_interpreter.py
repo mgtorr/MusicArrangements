@@ -2,6 +2,7 @@
 """
 LLM Interpreter - Translates natural language to music commands
 Uses Claude, Gemini, or OpenAI to interpret user requests
+Enhanced with composition assistant capabilities
 """
 
 import os
@@ -13,12 +14,19 @@ from abc import ABC, abstractmethod
 
 import httpx
 
+from composition_prompts import (
+    MUSIC_THEORY_CONTEXT,
+    get_task_prompt,
+    get_style_prompt,
+    ARRANGEMENT_PROMPT
+)
+
 logger = logging.getLogger(__name__)
 
 
 # === COMMAND SCHEMA ===
 COMMAND_SCHEMA = """
-You are a MuseScore Automator. Convert user requests into atomic commands.
+You are a MuseScore Composition Assistant and Automator. Convert user requests into atomic commands.
 
 AVAILABLE COMMANDS:
 1. add_note: Add a single note
@@ -48,13 +56,16 @@ C4 (middle C) = 60, D4 = 62, E4 = 64, F4 = 65, G4 = 67, A4 = 69, B4 = 71
 Add 12 for each octave up, subtract 12 for each octave down.
 C3 = 48, C5 = 72, C2 = 36 (bass), etc.
 
+MUSIC THEORY CONTEXT:
+{music_theory_context}
+
 OUTPUT FORMAT:
 Respond with ONLY a JSON object:
-{
+{{
   "intent": "<brief description of what user wants>",
   "commands": [<array of command objects>],
-  "notes": "<any important notes or limitations>"
-}
+  "notes": "<any important notes or music theory explanations>"
+}}
 """
 
 
@@ -96,10 +107,10 @@ class ClaudeProvider(LLMProvider):
                 },
                 json={
                     "model": self.model,
-                    "max_tokens": 4096,
+                    "max_tokens": 8192,
                     "messages": [{"role": "user", "content": prompt}]
                 },
-                timeout=30.0
+                timeout=60.0
             )
 
             if response.status_code != 200:
@@ -111,12 +122,42 @@ class ClaudeProvider(LLMProvider):
 
     def _build_prompt(self, user_request: str, score_context: Dict) -> str:
         context_str = json.dumps(score_context, indent=2) if score_context else "No score open"
-        return f"""{COMMAND_SCHEMA}
+        
+        # Detect if this is a specialized composition request
+        request_lower = user_request.lower()
+        
+        # Check for task-specific keywords
+        if any(keyword in request_lower for keyword in ["melody", "melodic", "tune", "theme"]):
+            base_prompt = get_task_prompt("melody")
+        elif any(keyword in request_lower for keyword in ["harmonize", "harmony", "chord progression", "chords"]):
+            base_prompt = get_task_prompt("harmony")
+        elif any(keyword in request_lower for keyword in ["rhythm", "groove", "beat"]):
+            base_prompt = get_task_prompt("rhythm")
+        elif any(keyword in request_lower for keyword in ["bass", "bassline", "bass line"]):
+            base_prompt = get_task_prompt("bass")
+        elif any(keyword in request_lower for keyword in ["form", "structure", "sections"]):
+            base_prompt = get_task_prompt("form")
+        # Check for style-specific keywords
+        elif any(style in request_lower for style in ["jazz", "classical", "pop", "rock", "blues", "folk"]):
+            for style in ["jazz", "classical", "pop", "rock", "blues", "folk"]:
+                if style in request_lower:
+                    base_prompt = get_style_prompt(style)
+                    break
+            else:
+                base_prompt = ARRANGEMENT_PROMPT
+        else:
+            base_prompt = ARRANGEMENT_PROMPT
+        
+        # Format with context
+        schema_formatted = COMMAND_SCHEMA.format(music_theory_context=MUSIC_THEORY_CONTEXT)
+        
+        return f"""{schema_formatted}
 
-CURRENT SCORE CONTEXT:
-{context_str}
-
-USER REQUEST: "{user_request}"
+{base_prompt.format(
+    music_theory_context=MUSIC_THEORY_CONTEXT,
+    score_context=context_str,
+    user_request=user_request
+)}
 
 Generate the commands to fulfill this request. Output ONLY valid JSON."""
 
@@ -169,10 +210,10 @@ class GeminiProvider(LLMProvider):
                     "contents": [{"parts": [{"text": prompt}]}],
                     "generationConfig": {
                         "temperature": 0.3,
-                        "maxOutputTokens": 4096
+                        "maxOutputTokens": 8192
                     }
                 },
-                timeout=30.0
+                timeout=60.0
             )
 
             if response.status_code != 200:
@@ -184,12 +225,39 @@ class GeminiProvider(LLMProvider):
 
     def _build_prompt(self, user_request: str, score_context: Dict) -> str:
         context_str = json.dumps(score_context, indent=2) if score_context else "No score open"
-        return f"""{COMMAND_SCHEMA}
+        
+        # Detect specialized composition request (same as Claude)
+        request_lower = user_request.lower()
+        
+        if any(keyword in request_lower for keyword in ["melody", "melodic", "tune", "theme"]):
+            base_prompt = get_task_prompt("melody")
+        elif any(keyword in request_lower for keyword in ["harmonize", "harmony", "chord progression", "chords"]):
+            base_prompt = get_task_prompt("harmony")
+        elif any(keyword in request_lower for keyword in ["rhythm", "groove", "beat"]):
+            base_prompt = get_task_prompt("rhythm")
+        elif any(keyword in request_lower for keyword in ["bass", "bassline", "bass line"]):
+            base_prompt = get_task_prompt("bass")
+        elif any(keyword in request_lower for keyword in ["form", "structure", "sections"]):
+            base_prompt = get_task_prompt("form")
+        elif any(style in request_lower for style in ["jazz", "classical", "pop", "rock", "blues", "folk"]):
+            for style in ["jazz", "classical", "pop", "rock", "blues", "folk"]:
+                if style in request_lower:
+                    base_prompt = get_style_prompt(style)
+                    break
+            else:
+                base_prompt = ARRANGEMENT_PROMPT
+        else:
+            base_prompt = ARRANGEMENT_PROMPT
+        
+        schema_formatted = COMMAND_SCHEMA.format(music_theory_context=MUSIC_THEORY_CONTEXT)
+        
+        return f"""{schema_formatted}
 
-CURRENT SCORE CONTEXT:
-{context_str}
-
-USER REQUEST: "{user_request}"
+{base_prompt.format(
+    music_theory_context=MUSIC_THEORY_CONTEXT,
+    score_context=context_str,
+    user_request=user_request
+)}
 
 Generate the commands to fulfill this request. Output ONLY valid JSON."""
 
@@ -233,13 +301,13 @@ class OpenAIProvider(LLMProvider):
                 json={
                     "model": self.model,
                     "messages": [
-                        {"role": "system", "content": "You are a MuseScore automation assistant. Output only valid JSON."},
+                        {"role": "system", "content": "You are a MuseScore composition assistant. Output only valid JSON."},
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.3,
-                    "max_tokens": 4096
+                    "max_tokens": 8192
                 },
-                timeout=30.0
+                timeout=60.0
             )
 
             if response.status_code != 200:
@@ -251,12 +319,39 @@ class OpenAIProvider(LLMProvider):
 
     def _build_prompt(self, user_request: str, score_context: Dict) -> str:
         context_str = json.dumps(score_context, indent=2) if score_context else "No score open"
-        return f"""{COMMAND_SCHEMA}
+        
+        # Detect specialized composition request (same as others)
+        request_lower = user_request.lower()
+        
+        if any(keyword in request_lower for keyword in ["melody", "melodic", "tune", "theme"]):
+            base_prompt = get_task_prompt("melody")
+        elif any(keyword in request_lower for keyword in ["harmonize", "harmony", "chord progression", "chords"]):
+            base_prompt = get_task_prompt("harmony")
+        elif any(keyword in request_lower for keyword in ["rhythm", "groove", "beat"]):
+            base_prompt = get_task_prompt("rhythm")
+        elif any(keyword in request_lower for keyword in ["bass", "bassline", "bass line"]):
+            base_prompt = get_task_prompt("bass")
+        elif any(keyword in request_lower for keyword in ["form", "structure", "sections"]):
+            base_prompt = get_task_prompt("form")
+        elif any(style in request_lower for style in ["jazz", "classical", "pop", "rock", "blues", "folk"]):
+            for style in ["jazz", "classical", "pop", "rock", "blues", "folk"]:
+                if style in request_lower:
+                    base_prompt = get_style_prompt(style)
+                    break
+            else:
+                base_prompt = ARRANGEMENT_PROMPT
+        else:
+            base_prompt = ARRANGEMENT_PROMPT
+        
+        schema_formatted = COMMAND_SCHEMA.format(music_theory_context=MUSIC_THEORY_CONTEXT)
+        
+        return f"""{schema_formatted}
 
-CURRENT SCORE CONTEXT:
-{context_str}
-
-USER REQUEST: "{user_request}"
+{base_prompt.format(
+    music_theory_context=MUSIC_THEORY_CONTEXT,
+    score_context=context_str,
+    user_request=user_request
+)}
 
 Generate the commands to fulfill this request."""
 

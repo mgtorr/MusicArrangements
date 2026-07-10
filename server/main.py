@@ -16,6 +16,15 @@ from bridge_server import MuseScoreBridge, AtomicCommand
 from llm_interpreter import LLMInterpreter, interpreter
 from music_logic import MusicGenerator
 from validator import CommandValidator
+from composition_assistant import (
+    Arranger, 
+    ProgressionGenerator, 
+    MelodyGenerator,
+    Harmonizer,
+    ArrangementStyle,
+    FormType,
+    MelodyContour
+)
 
 # Configure logging
 logging.basicConfig(
@@ -33,6 +42,7 @@ class LLMBridgeServer:
         self.interpreter = interpreter
         self.validator: Optional[CommandValidator] = None
         self.generator: Optional[MusicGenerator] = None
+        self.arranger: Optional[Arranger] = None
 
         # Load config
         self.config = self._load_config()
@@ -198,18 +208,265 @@ class LLMBridgeServer:
 
         return result
 
+    async def generate_melody_action(self, params: Dict) -> Dict:
+        """Generate melody using composition assistant"""
+        result = {"success": False, "errors": [], "commands_sent": 0}
+
+        try:
+            key = params.get("key", "C")
+            contour_type = params.get("contour", "arch")
+            measures = params.get("measures", 4)
+            density = params.get("density", "moderate")
+
+            # Initialize melody generator
+            mel_gen = MelodyGenerator(key, "major")
+            
+            contour = MelodyContour(
+                direction=contour_type,
+                range_octaves=1.5,
+                rhythm_density=density
+            )
+
+            # Generate melody (4 notes per measure as baseline)
+            num_notes = measures * 4
+            melody = mel_gen.generate_melody(contour, num_notes, start_octave=5)
+
+            # Convert to commands
+            commands = []
+            current_measure = 0
+            ticks_in_measure = 0
+            ticks_per_measure = 1920  # Whole note
+
+            for pitch, duration in melody:
+                # Check if we need to move to next measure
+                if ticks_in_measure + duration > ticks_per_measure:
+                    current_measure += 1
+                    ticks_in_measure = 0
+
+                commands.append({
+                    "type": "add_note",
+                    "pitch": pitch,
+                    "duration": duration,
+                    "measure": current_measure,
+                    "track": 0
+                })
+
+                ticks_in_measure += duration
+
+            # Validate and send
+            self.validator = CommandValidator(
+                {"measures": self.bridge.score_info.measures if self.bridge.score_info else 100}
+            )
+            valid_commands, errors = self.validator.validate_commands(commands)
+            result["errors"].extend(errors)
+
+            if valid_commands:
+                atomic_commands = [AtomicCommand(cmd["type"], cmd) for cmd in valid_commands]
+                success = await self.bridge.send_commands(atomic_commands)
+                if success:
+                    result["success"] = True
+                    result["commands_sent"] = len(valid_commands)
+                    logger.info(f"Generated melody: {len(valid_commands)} notes")
+
+        except Exception as e:
+            logger.exception("Error generating melody")
+            result["errors"].append(str(e))
+
+        return result
+
+    async def generate_progression_action(self, params: Dict) -> Dict:
+        """Generate chord progression"""
+        result = {"success": False, "errors": [], "commands_sent": 0}
+
+        try:
+            key = params.get("key", "C")
+            style = params.get("style", "pop")
+            measures = params.get("measures", 8)
+
+            # Initialize progression generator
+            prog_gen = ProgressionGenerator(key, "major")
+            progression = prog_gen.generate_progression(style, measures)
+
+            logger.info(f"Generated progression: {progression.chords}")
+            logger.info(f"Roman numerals: {progression.roman_numerals}")
+
+            # Convert to commands
+            commands = []
+            for i, chord_name in enumerate(progression.chords):
+                # Parse chord and get pitches
+                from music_logic import get_chord_pitches
+                
+                # Simple parsing (root + type)
+                root = chord_name[0]
+                chord_type = "major"
+                if "min" in chord_name or "m" in chord_name:
+                    chord_type = "minor"
+                elif "7" in chord_name:
+                    chord_type = "dom7"
+
+                pitches = get_chord_pitches(root, chord_type, octave=4)
+
+                commands.append({
+                    "type": "add_chord",
+                    "pitches": pitches,
+                    "duration": 1920,  # Whole note
+                    "measure": i,
+                    "track": 0
+                })
+
+            # Validate and send
+            self.validator = CommandValidator(
+                {"measures": self.bridge.score_info.measures if self.bridge.score_info else 100}
+            )
+            valid_commands, errors = self.validator.validate_commands(commands)
+            result["errors"].extend(errors)
+
+            if valid_commands:
+                atomic_commands = [AtomicCommand(cmd["type"], cmd) for cmd in valid_commands]
+                success = await self.bridge.send_commands(atomic_commands)
+                if success:
+                    result["success"] = True
+                    result["commands_sent"] = len(valid_commands)
+                    result["progression"] = progression.chords
+
+        except Exception as e:
+            logger.exception("Error generating progression")
+            result["errors"].append(str(e))
+
+        return result
+
+    async def harmonize_action(self, params: Dict) -> Dict:
+        """Harmonize existing melody"""
+        result = {"success": False, "errors": [], "commands_sent": 0}
+
+        try:
+            style = params.get("style", "thirds")
+            target_track = params.get("track", 1)
+
+            # For now, return a note about implementation
+            result["errors"].append(
+                "Harmonization requires reading existing melody from score. "
+                "Use natural language command instead: 'harmonize the melody in thirds'"
+            )
+
+        except Exception as e:
+            logger.exception("Error harmonizing")
+            result["errors"].append(str(e))
+
+        return result
+
+    async def create_arrangement_action(self, params: Dict) -> Dict:
+        """Create full arrangement"""
+        result = {"success": False, "errors": [], "commands_sent": 0}
+
+        try:
+            key = params.get("key", "C")
+            style_name = params.get("style", "pop")
+            form_name = params.get("form", "verse_chorus")
+            measures = params.get("measures", 16)
+
+            # Map style name to enum
+            style_map = {
+                "pop": ArrangementStyle.POP,
+                "jazz": ArrangementStyle.JAZZ,
+                "rock": ArrangementStyle.ROCK,
+                "classical": ArrangementStyle.CLASSICAL,
+                "blues": ArrangementStyle.BLUES,
+            }
+            style = style_map.get(style_name, ArrangementStyle.POP)
+
+            # Map form name to enum
+            form_map = {
+                "verse_chorus": FormType.VERSE_CHORUS,
+                "ABA": FormType.TERNARY,
+                "AABA": FormType.THIRTY_TWO_BAR,
+                "binary": FormType.BINARY,
+            }
+            form = form_map.get(form_name, FormType.VERSE_CHORUS)
+
+            # Initialize arranger
+            time_sig = (4, 4)
+            if self.bridge.score_info and self.bridge.score_info.time_signature:
+                time_sig = (
+                    self.bridge.score_info.time_signature.get("numerator", 4),
+                    self.bridge.score_info.time_signature.get("denominator", 4)
+                )
+
+            self.arranger = Arranger(key, time_sig)
+            arrangement = self.arranger.create_arrangement(style, form, measures)
+
+            logger.info(f"Created arrangement: {arrangement['form']} in {arrangement['key']}")
+            logger.info(f"Sections: {[s['name'] for s in arrangement['sections']]}")
+
+            # Generate commands for first section as example
+            commands = []
+            if arrangement["sections"]:
+                first_section = arrangement["sections"][0]
+                progression = first_section["progression"]
+                
+                if progression:
+                    from music_logic import get_chord_pitches
+                    
+                    for i, chord_name in enumerate(progression.chords):
+                        root = chord_name[0]
+                        chord_type = "major"
+                        if "min" in chord_name:
+                            chord_type = "minor"
+                        elif "7" in chord_name:
+                            chord_type = "dom7"
+
+                        pitches = get_chord_pitches(root, chord_type, octave=4)
+                        measure = first_section["start_measure"] + i
+
+                        commands.append({
+                            "type": "add_chord",
+                            "pitches": pitches,
+                            "duration": 1920,
+                            "measure": measure,
+                            "track": 0
+                        })
+
+            # Validate and send
+            if commands:
+                self.validator = CommandValidator(
+                    {"measures": self.bridge.score_info.measures if self.bridge.score_info else 100}
+                )
+                valid_commands, errors = self.validator.validate_commands(commands)
+                result["errors"].extend(errors)
+
+                if valid_commands:
+                    atomic_commands = [AtomicCommand(cmd["type"], cmd) for cmd in valid_commands]
+                    success = await self.bridge.send_commands(atomic_commands)
+                    if success:
+                        result["success"] = True
+                        result["commands_sent"] = len(valid_commands)
+                        result["arrangement"] = {
+                            "form": arrangement["form"],
+                            "sections": [s["name"] for s in arrangement["sections"]]
+                        }
+
+        except Exception as e:
+            logger.exception("Error creating arrangement")
+            result["errors"].append(str(e))
+
+        return result
+
     async def run_cli(self):
         """Run interactive CLI"""
         print("\n" + "=" * 60)
         print("LLM Bridge Server - Interactive Mode")
         print("=" * 60)
         print("\nCommands:")
-        print("  <text>     - Send natural language request to LLM")
-        print("  /bass      - Generate walking bass (Music21)")
-        print("  /drums     - Generate drum pattern (Music21)")
-        print("  /info      - Show current score info")
-        print("  /ping      - Check plugin connection status")
-        print("  /quit      - Exit")
+        print("  <text>       - Send natural language request to LLM")
+        print("  /bass        - Generate walking bass (Music21)")
+        print("  /drums       - Generate drum pattern (Music21)")
+        print("  /melody      - Generate melody with AI composer")
+        print("  /progression - Generate chord progression")
+        print("  /harmonize   - Harmonize existing melody")
+        print("  /arrange     - Create full arrangement")
+        print("  /info        - Show current score info")
+        print("  /ping        - Check plugin connection status")
+        print("  /quit        - Exit")
         print("\n")
 
         while True:
@@ -252,6 +509,61 @@ class LLMBridgeServer:
                     measures = int(input("Measures: ").strip() or "4")
                     result = await self.process_music_logic("drum_pattern", {
                         "style": style,
+                        "measures": measures
+                    })
+                    print(f"Result: {result}")
+
+                elif user_input == "/melody":
+                    print("\n=== Melody Generation ===")
+                    key = input("Key (e.g., C, G, Dm): ").strip() or "C"
+                    contour = input("Contour (ascending/descending/arch/static): ").strip() or "arch"
+                    measures = int(input("Number of measures: ").strip() or "4")
+                    density = input("Rhythm density (sparse/moderate/dense): ").strip() or "moderate"
+                    
+                    result = await self.generate_melody_action({
+                        "key": key,
+                        "contour": contour,
+                        "measures": measures,
+                        "density": density
+                    })
+                    print(f"Result: {result}")
+
+                elif user_input == "/progression":
+                    print("\n=== Chord Progression ===")
+                    key = input("Key (e.g., C, G, Am): ").strip() or "C"
+                    style = input("Style (pop/jazz/classical/blues/folk): ").strip() or "pop"
+                    measures = int(input("Number of measures: ").strip() or "8")
+                    
+                    result = await self.generate_progression_action({
+                        "key": key,
+                        "style": style,
+                        "measures": measures
+                    })
+                    print(f"Result: {result}")
+
+                elif user_input == "/harmonize":
+                    print("\n=== Harmonization ===")
+                    print("(This requires existing melody in the score)")
+                    style = input("Harmony style (thirds/sixths/fourths/triads): ").strip() or "thirds"
+                    track = int(input("Target harmony track: ").strip() or "1")
+                    
+                    result = await self.harmonize_action({
+                        "style": style,
+                        "track": track
+                    })
+                    print(f"Result: {result}")
+
+                elif user_input == "/arrange":
+                    print("\n=== Full Arrangement ===")
+                    key = input("Key (e.g., C, G): ").strip() or "C"
+                    style = input("Style (pop/jazz/rock/classical/blues): ").strip() or "pop"
+                    form = input("Form (verse_chorus/ABA/AABA): ").strip() or "verse_chorus"
+                    measures = int(input("Total measures: ").strip() or "16")
+                    
+                    result = await self.create_arrangement_action({
+                        "key": key,
+                        "style": style,
+                        "form": form,
                         "measures": measures
                     })
                     print(f"Result: {result}")
