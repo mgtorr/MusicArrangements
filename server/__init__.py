@@ -8,7 +8,7 @@ from .llm_interpreter import LLMInterpreter, interpreter
 from .music_logic import MusicGenerator
 from .validator import CommandValidator
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 __all__ = [
     "MuseScoreBridge",
     "AtomicCommand",
