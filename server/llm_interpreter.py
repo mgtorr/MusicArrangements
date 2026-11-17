@@ -5,13 +5,12 @@ Uses Claude, Gemini, or OpenAI to interpret user requests
 """
 
 import os
+import re
 import json
 import logging
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
-
-import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -22,14 +21,14 @@ You are a MuseScore Automator. Convert user requests into atomic commands.
 
 AVAILABLE COMMANDS:
 1. add_note: Add a single note
-   {"type": "add_note", "pitch": <MIDI 0-127>, "duration": <ticks>, "measure": <int>, "track": <int>}
+   {"type": "add_note", "pitch": <MIDI 0-127>, "duration": <ticks>, "measure": <int>, "tick": <int>, "track": <int>}
    Duration: 1920=whole, 960=half, 480=quarter, 240=eighth, 120=16th
 
 2. add_chord: Add a chord (multiple notes)
-   {"type": "add_chord", "pitches": [<MIDI>, ...], "duration": <ticks>, "measure": <int>, "track": <int>}
+   {"type": "add_chord", "pitches": [<MIDI>, ...], "duration": <ticks>, "measure": <int>, "tick": <int>, "track": <int>}
 
 3. add_rest: Add a rest
-   {"type": "add_rest", "duration": <ticks>, "measure": <int>, "track": <int>}
+   {"type": "add_rest", "duration": <ticks>, "measure": <int>, "tick": <int>, "track": <int>}
 
 4. add_dynamic: Add dynamic marking
    {"type": "add_dynamic", "dynamic": "pp|p|mp|mf|f|ff|sfz", "measure": <int>, "track": <int>}
@@ -40,8 +39,15 @@ AVAILABLE COMMANDS:
 6. add_text: Add text annotation
    {"type": "add_text", "text": "<string>", "measure": <int>, "track": <int>, "textType": "staff|system|lyrics"}
 
-7. transpose: Transpose selection
+7. transpose: Transpose every note in the score
    {"type": "transpose", "semitones": <int>}
+
+PLACEMENT:
+- measure 0 is the first bar. When the user says "bar 4" or "measure 4", send measure 3.
+- tick is the position inside the bar. 0 is the downbeat. A quarter note is 480 ticks.
+- In 4/4 the beats are tick 0, 480, 960, and 1440. A bar holds 1920 ticks.
+- Notes in one voice must follow each other in time. Give every note, chord, and rest a tick.
+- Notes that sound together are one add_chord sharing one tick and one duration.
 
 MIDI PITCH REFERENCE:
 C4 (middle C) = 60, D4 = 62, E4 = 64, F4 = 65, G4 = 67, A4 = 69, B4 = 71
@@ -75,6 +81,38 @@ class LLMProvider(ABC):
         pass
 
 
+def parse_llm_payload(content: str) -> LLMResponse:
+    """Pull the JSON object out of a model reply, including fenced blocks."""
+    text = (content or "").strip()
+    candidates = []
+    fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL | re.IGNORECASE)
+    if fence:
+        candidates.append(fence.group(1).strip())
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end > start:
+        candidates.append(text[start:end + 1])
+    candidates.append(text)
+
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            commands = data.get("commands", [])
+            if not isinstance(commands, list):
+                commands = []
+            return LLMResponse(
+                intent=str(data.get("intent", "")),
+                commands=commands,
+                notes=str(data.get("notes", "")),
+                raw=content,
+            )
+
+    return LLMResponse(intent="Could not parse", commands=[], notes=text[:500], raw=content)
+
+
 class ClaudeProvider(LLMProvider):
     """Anthropic Claude provider"""
 
@@ -84,6 +122,8 @@ class ClaudeProvider(LLMProvider):
         self.endpoint = "https://api.anthropic.com/v1/messages"
 
     async def interpret(self, user_request: str, score_context: Dict) -> LLMResponse:
+        import httpx
+
         prompt = self._build_prompt(user_request, score_context)
 
         async with httpx.AsyncClient() as client:
@@ -107,7 +147,7 @@ class ClaudeProvider(LLMProvider):
 
             data = response.json()
             content = data["content"][0]["text"]
-            return self._parse_response(content)
+            return parse_llm_payload(content)
 
     def _build_prompt(self, user_request: str, score_context: Dict) -> str:
         context_str = json.dumps(score_context, indent=2) if score_context else "No score open"
@@ -120,35 +160,6 @@ USER REQUEST: "{user_request}"
 
 Generate the commands to fulfill this request. Output ONLY valid JSON."""
 
-    def _parse_response(self, content: str) -> LLMResponse:
-        # Find JSON in response
-        start = content.find("{")
-        end = content.rfind("}") + 1
-
-        if start == -1 or end <= start:
-            return LLMResponse(
-                intent="Could not parse",
-                commands=[],
-                notes=content,
-                raw=content
-            )
-
-        try:
-            data = json.loads(content[start:end])
-            return LLMResponse(
-                intent=data.get("intent", ""),
-                commands=data.get("commands", []),
-                notes=data.get("notes", ""),
-                raw=content
-            )
-        except json.JSONDecodeError as e:
-            return LLMResponse(
-                intent="JSON parse error",
-                commands=[],
-                notes=str(e),
-                raw=content
-            )
-
 
 class GeminiProvider(LLMProvider):
     """Google Gemini provider"""
@@ -158,6 +169,8 @@ class GeminiProvider(LLMProvider):
         self.model = model
 
     async def interpret(self, user_request: str, score_context: Dict) -> LLMResponse:
+        import httpx
+
         prompt = self._build_prompt(user_request, score_context)
         endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
 
@@ -180,7 +193,7 @@ class GeminiProvider(LLMProvider):
 
             data = response.json()
             content = data["candidates"][0]["content"]["parts"][0]["text"]
-            return self._parse_response(content)
+            return parse_llm_payload(content)
 
     def _build_prompt(self, user_request: str, score_context: Dict) -> str:
         context_str = json.dumps(score_context, indent=2) if score_context else "No score open"
@@ -193,24 +206,6 @@ USER REQUEST: "{user_request}"
 
 Generate the commands to fulfill this request. Output ONLY valid JSON."""
 
-    def _parse_response(self, content: str) -> LLMResponse:
-        start = content.find("{")
-        end = content.rfind("}") + 1
-
-        if start == -1 or end <= start:
-            return LLMResponse(intent="Could not parse", commands=[], notes=content, raw=content)
-
-        try:
-            data = json.loads(content[start:end])
-            return LLMResponse(
-                intent=data.get("intent", ""),
-                commands=data.get("commands", []),
-                notes=data.get("notes", ""),
-                raw=content
-            )
-        except json.JSONDecodeError as e:
-            return LLMResponse(intent="JSON parse error", commands=[], notes=str(e), raw=content)
-
 
 class OpenAIProvider(LLMProvider):
     """OpenAI provider"""
@@ -221,6 +216,8 @@ class OpenAIProvider(LLMProvider):
         self.endpoint = "https://api.openai.com/v1/chat/completions"
 
     async def interpret(self, user_request: str, score_context: Dict) -> LLMResponse:
+        import httpx
+
         prompt = self._build_prompt(user_request, score_context)
 
         async with httpx.AsyncClient() as client:
@@ -247,7 +244,7 @@ class OpenAIProvider(LLMProvider):
 
             data = response.json()
             content = data["choices"][0]["message"]["content"]
-            return self._parse_response(content)
+            return parse_llm_payload(content)
 
     def _build_prompt(self, user_request: str, score_context: Dict) -> str:
         context_str = json.dumps(score_context, indent=2) if score_context else "No score open"
@@ -259,24 +256,6 @@ CURRENT SCORE CONTEXT:
 USER REQUEST: "{user_request}"
 
 Generate the commands to fulfill this request."""
-
-    def _parse_response(self, content: str) -> LLMResponse:
-        start = content.find("{")
-        end = content.rfind("}") + 1
-
-        if start == -1 or end <= start:
-            return LLMResponse(intent="Could not parse", commands=[], notes=content, raw=content)
-
-        try:
-            data = json.loads(content[start:end])
-            return LLMResponse(
-                intent=data.get("intent", ""),
-                commands=data.get("commands", []),
-                notes=data.get("notes", ""),
-                raw=content
-            )
-        except json.JSONDecodeError as e:
-            return LLMResponse(intent="JSON parse error", commands=[], notes=str(e), raw=content)
 
 
 class LLMInterpreter:

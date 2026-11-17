@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LLM Bridge</title>
+  <style>
+    :root {
+      --ink: #241c14;
+      --ink-soft: #5c5146;
+      --paper: #f6f1e6;
+      --paper-2: #fffdf8;
+      --rule: #e3d5c0;
+      --walnut: #1c1712;
+      --walnut-2: #2a231c;
+      --green: #1a6848;
+      --green-deep: #114e36;
+      --rust: #8d3b28;
+      --amber: #8a5a12;
+      --focus: #1a6848;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--paper);
+      background:
+        radial-gradient(1200px 500px at 10% -10%, #3a3128 0%, transparent 55%),
+        var(--walnut);
+      font-family: Palatino, "Palatino Linotype", "Iowan Old Style", Georgia, serif;
+      line-height: 1.45;
+    }
+
+    .desk {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 2.2rem 1.25rem 3rem;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 1rem;
+      margin-bottom: 1.4rem;
+    }
+
+    .eyebrow {
+      margin: 0 0 0.2rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-size: 0.72rem;
+      color: #c8b49a;
+    }
+
+    h1 {
+      margin: 0;
+      font-weight: 600;
+      font-size: 2.4rem;
+      letter-spacing: -0.03em;
+      line-height: 1;
+    }
+
+    header p.lede {
+      margin: 0.45rem 0 0;
+      max-width: 36rem;
+      color: #d9cbb8;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      border: 1px solid #4a3d32;
+      background: var(--walnut-2);
+      color: #f3eadc;
+      border-radius: 999px;
+      padding: 0.35rem 0.75rem 0.35rem 0.55rem;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 0.78rem;
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 0.55rem;
+      height: 0.55rem;
+      border-radius: 50%;
+      background: var(--amber);
+      box-shadow: 0 0 0 3px rgba(138, 90, 18, 0.25);
+    }
+
+    .dot.on {
+      background: #3dbe86;
+      box-shadow: 0 0 0 3px rgba(61, 190, 134, 0.2);
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr);
+      gap: 1rem;
+    }
+
+    .paper {
+      background: var(--paper);
+      color: var(--ink);
+      border-radius: 14px;
+      padding: 1.15rem 1.2rem 1.25rem;
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+    }
+
+    .paper h2 {
+      margin: 0 0 0.75rem;
+      font-size: 1.15rem;
+      font-weight: 600;
+    }
+
+    .score-title {
+      margin: 0;
+      font-size: 1.45rem;
+      line-height: 1.15;
+    }
+
+    .meta {
+      margin: 0.35rem 0 0;
+      color: var(--ink-soft);
+    }
+
+    .parts {
+      margin: 0.8rem 0 0;
+      padding-top: 0.7rem;
+      border-top: 1px solid var(--rule);
+      color: var(--ink-soft);
+      font-size: 0.95rem;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 0.35rem;
+      font-size: 0.95rem;
+    }
+
+    textarea,
+    input,
+    select {
+      width: 100%;
+      font: inherit;
+      color: var(--ink);
+      background: var(--paper-2);
+      border: 1px solid #d7c6ae;
+      border-radius: 8px;
+      padding: 0.65rem 0.7rem;
+    }
+
+    textarea {
+      min-height: 6.2rem;
+      resize: vertical;
+    }
+
+    textarea:focus,
+    input:focus,
+    select:focus,
+    button:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+    }
+
+    button {
+      font: inherit;
+      cursor: pointer;
+      border: 0;
+      border-radius: 8px;
+      padding: 0.6rem 0.9rem;
+      background: var(--green);
+      color: #f6f1e6;
+    }
+
+    button:hover { background: var(--green-deep); }
+
+    button.ghost {
+      background: transparent;
+      color: var(--ink);
+      border: 1px solid #d7c6ae;
+    }
+
+    button.ghost:hover { background: #efe6d6; }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: progress;
+    }
+
+    .tools {
+      margin-top: 1rem;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    .tool-grid {
+      display: grid;
+      grid-template-columns: 1.4fr 0.6fr 0.5fr;
+      gap: 0.5rem;
+      align-items: end;
+    }
+
+    .tool-grid label { margin: 0 0 0.3rem; font-size: 0.85rem; color: var(--ink-soft); }
+
+    .span {
+      grid-column: 1 / -1;
+    }
+
+    #result {
+      margin-top: 1rem;
+    }
+
+    .outcome {
+      display: inline-block;
+      margin: 0 0 0.6rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 0.75rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      background: #efe6d6;
+      color: var(--ink-soft);
+    }
+
+    .outcome.queued { background: #f3e2c2; color: var(--amber); }
+    .outcome.applied { background: #dceee4; color: var(--green-deep); }
+    .outcome.failed,
+    .outcome.invalid,
+    .outcome.unconfirmed,
+    .outcome.error { background: #f3ddd6; color: var(--rust); }
+
+    .intent {
+      margin: 0;
+      font-size: 1.35rem;
+      line-height: 1.25;
+    }
+
+    .notes, .source-line {
+      margin: 0.4rem 0 0;
+      color: var(--ink-soft);
+    }
+
+    ol.commands {
+      list-style: none;
+      margin: 0.9rem 0 0;
+      padding: 0;
+    }
+
+    ol.commands li {
+      padding: 0.45rem 0;
+      border-top: 1px solid var(--rule);
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 0.86rem;
+    }
+
+    .problems {
+      margin: 0.8rem 0 0;
+      padding-left: 1.1rem;
+      color: var(--rust);
+    }
+
+    .warnings {
+      margin: 0.6rem 0 0;
+      padding-left: 1.1rem;
+      color: var(--amber);
+    }
+
+    footer {
+      margin-top: 1.2rem;
+      color: #b5a38e;
+      font-size: 0.9rem;
+    }
+
+    @media (max-width: 800px) {
+      h1 { font-size: 2rem; }
+      header { flex-direction: column; align-items: flex-start; }
+      .layout, .tools, .tool-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="desk">
+    <header>
+      <div>
+        <p class="eyebrow">MuseScore</p>
+        <h1>LLM Bridge</h1>
+        <p class="lede">Write a change here. The plugin puts it into the open score.</p>
+      </div>
+      <div class="pill" role="status" aria-live="polite">
+        <span class="dot" id="dot"></span>
+        <span id="conn">Looking for the plugin</span>
+      </div>
+    </header>
+
+    <div class="layout">
+      <section class="paper" aria-labelledby="score-heading">
+        <h2 id="score-heading">Open score</h2>
+        <p class="score-title" id="score-title">No score yet</p>
+        <p class="meta" id="score-meta">Connect LLM Bridge in MuseScore with a score open.</p>
+        <p class="parts" id="score-parts"></p>
+        <p class="meta" id="model-line">Checking the theory engine…</p>
+      </section>
+
+      <section class="paper">
+        <form id="ask">
+          <label for="request">What should change?</label>
+          <textarea id="request" name="request" required placeholder="Add a C major chord at the beginning"></textarea>
+          <div class="actions">
+            <button type="submit" id="send">Write into the score</button>
+            <button type="button" class="ghost" data-example="Add a C major chord at the beginning">C major chord</button>
+            <button type="button" class="ghost" data-example="Transpose up a perfect fifth">Up a fifth</button>
+            <button type="button" class="ghost" data-example="Set the tempo to 96">Tempo 96</button>
+            <button type="button" class="ghost" data-example="Add a forte in measure 1">Forte</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div class="tools">
+      <section class="paper">
+        <h2>Walking bass</h2>
+        <form id="bass" class="tool-grid">
+          <div>
+            <label for="chords">Chords</label>
+            <input id="chords" value="G C D G" autocomplete="off">
+          </div>
+          <div>
+            <label for="bass-bars">Bars</label>
+            <input id="bass-bars" type="number" min="1" max="256" value="4">
+          </div>
+          <div>
+            <label for="bass-track">Track</label>
+            <input id="bass-track" type="number" min="0" max="64" value="0">
+          </div>
+          <div class="span">
+            <button type="submit">Write bass</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="paper">
+        <h2>Drum pattern</h2>
+        <form id="drums" class="tool-grid">
+          <div>
+            <label for="style">Style</label>
+            <select id="style">
+              <option value="rock">Rock</option>
+              <option value="jazz">Jazz</option>
+              <option value="pop">Pop</option>
+              <option value="latin">Latin</option>
+              <option value="metal">Metal</option>
+            </select>
+          </div>
+          <div>
+            <label for="drum-bars">Bars</label>
+            <input id="drum-bars" type="number" min="1" max="256" value="4">
+          </div>
+          <div>
+            <label for="drum-track">Track</label>
+            <input id="drum-track" type="number" min="0" max="64" value="0">
+          </div>
+          <div class="span">
+            <button type="submit">Write drums</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <section class="paper" id="result" aria-live="polite">
+      <p class="outcome" id="outcome">Ready</p>
+      <p class="intent" id="intent">A request will show its notes here.</p>
+      <p class="source-line" id="source-line"></p>
+      <p class="notes" id="notes"></p>
+      <ol class="commands" id="commands"></ol>
+      <ul class="warnings" id="warnings"></ul>
+      <ul class="problems" id="problems"></ul>
+    </section>
+
+    <footer id="footer">
+      Bar numbers in a sentence start at 1. Commands land on the beat they name.
+    </footer>
+  </div>
+
+  <script>
+    const outcome = document.getElementById("outcome")
+    const intent = document.getElementById("intent")
+    const sourceLine = document.getElementById("source-line")
+    const notes = document.getElementById("notes")
+    const commands = document.getElementById("commands")
+    const warnings = document.getElementById("warnings")
+    const problems = document.getElementById("problems")
+    const sendButton = document.getElementById("send")
+
+    let watching = null
+
+    const statusCopy = {
+      queued: "Queued",
+      applied: "In the score",
+      failed: "Problem",
+      invalid: "Not sent",
+      unconfirmed: "No reply",
+      error: "Problem"
+    }
+
+    function setOutcome(status, message) {
+      outcome.className = "outcome " + (status || "")
+      outcome.textContent = statusCopy[status] || "Ready"
+      if (message) intent.textContent = message
+    }
+
+    function fillList(node, items) {
+      node.innerHTML = ""
+      ;(items || []).forEach(function (item) {
+        const li = document.createElement("li")
+        li.textContent = item
+        node.appendChild(li)
+      })
+    }
+
+    function renderResult(data) {
+      const status = data.status || (data.success ? "queued" : "invalid")
+      setOutcome(status, data.intent || "Request")
+      const provider = data.source === "llm" ? "Model" : "Local theory"
+      sourceLine.textContent = provider + (data.commands_sent ? " · " + data.commands_sent + " commands" : "")
+      let detail = data.notes || ""
+      if (status === "queued") {
+        const pluginOn = document.getElementById("dot").classList.contains("on")
+        detail = (detail ? detail + " " : "") + (
+          pluginOn
+            ? "The plugin will write this into the score."
+            : "Open LLM Bridge in MuseScore and press Connect to write this in."
+        )
+      }
+      notes.textContent = detail
+      const preview = data.preview || []
+      const shown = preview.slice(0, 24).map(function (line) { return line })
+      if (preview.length > shown.length) {
+        shown.push("and " + (preview.length - shown.length) + " more")
+      }
+      fillList(commands, shown)
+      fillList(warnings, data.warnings || [])
+      fillList(problems, data.errors || [])
+      if (status === "queued" && data.batch_id !== null && data.batch_id !== undefined) {
+        watching = Number(data.batch_id)
+      } else {
+        watching = null
+      }
+    }
+
+    async function post(url, payload) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      })
+      const data = await response.json()
+      if (!response.ok && !data.status) {
+        throw new Error(data.message || "The server rejected the request")
+      }
+      return data
+    }
+
+    document.getElementById("ask").addEventListener("submit", async function (event) {
+      event.preventDefault()
+      const text = document.getElementById("request").value.trim()
+      if (!text) return
+      sendButton.disabled = true
+      setOutcome("queued", "Writing…")
+      try {
+        renderResult(await post("/request", { request: text }))
+      } catch (error) {
+        setOutcome("error", "The desk could not reach the server.")
+        fillList(problems, [String(error.message || error)])
+      } finally {
+        sendButton.disabled = false
+      }
+    })
+
+    document.querySelectorAll("[data-example]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        document.getElementById("request").value = button.getAttribute("data-example")
+        document.getElementById("ask").requestSubmit()
+      })
+    })
+
+    document.getElementById("bass").addEventListener("submit", async function (event) {
+      event.preventDefault()
+      const chords = document.getElementById("chords").value.trim().split(/\s+/).filter(Boolean)
+      try {
+        renderResult(await post("/music", {
+          action: "walking_bass",
+          chords: chords,
+          measures: Number(document.getElementById("bass-bars").value || 4),
+          track: Number(document.getElementById("bass-track").value || 0)
+        }))
+      } catch (error) {
+        setOutcome("error", "The bass line was not sent.")
+        fillList(problems, [String(error.message || error)])
+      }
+    })
+
+    document.getElementById("drums").addEventListener("submit", async function (event) {
+      event.preventDefault()
+      try {
+        renderResult(await post("/music", {
+          action: "drum_pattern",
+          style: document.getElementById("style").value,
+          measures: Number(document.getElementById("drum-bars").value || 4),
+          track: Number(document.getElementById("drum-track").value || 0)
+        }))
+      } catch (error) {
+        setOutcome("error", "The drum pattern was not sent.")
+        fillList(problems, [String(error.message || error)])
+      }
+    })
+
+    function renderStatus(status) {
+      const dot = document.getElementById("dot")
+      const conn = document.getElementById("conn")
+      if (status.plugin_connected) {
+        dot.className = "dot on"
+        conn.textContent = "Plugin connected"
+      } else {
+        dot.className = "dot"
+        conn.textContent = "Plugin not connected"
+      }
+
+      const score = status.score
+      const title = document.getElementById("score-title")
+      const meta = document.getElementById("score-meta")
+      const parts = document.getElementById("score-parts")
+      if (!score) {
+        title.textContent = "No score yet"
+        meta.textContent = "Connect LLM Bridge in MuseScore with a score open."
+        parts.textContent = ""
+      } else {
+        title.textContent = score.title || "Untitled"
+        const bits = []
+        if (score.measures) bits.push(score.measures + " bars")
+        if (score.staves) bits.push(score.staves + " staves")
+        const time = score.time_signature
+        if (time && time.numerator) bits.push(time.numerator + "/" + time.denominator)
+        if (score.key_name) bits.push(score.key_name)
+        meta.textContent = bits.join(" · ") || "Score connected"
+        const names = (score.parts || []).map(function (part) { return part.name }).filter(Boolean)
+        parts.textContent = names.length ? names.join(", ") : ""
+      }
+
+      const llm = status.llm || {}
+      const model = document.getElementById("model-line")
+      if (llm.configured) {
+        model.textContent = "Model: " + llm.provider + (llm.model ? " · " + llm.model : "")
+      } else {
+        model.textContent = "Local theory engine. Add an API key when you want freer wording."
+      }
+
+      if (watching !== null && status.last_results && Number(status.last_results.batch_id) === watching) {
+        const failed = Number(status.last_results.failed || 0)
+        const executed = Number(status.last_results.executed || 0)
+        if (failed > 0) {
+          outcome.className = "outcome failed"
+          outcome.textContent = "Problem"
+          const extra = status.last_results.errors || []
+          if (extra.length) fillList(problems, extra)
+        } else {
+          outcome.className = "outcome applied"
+          outcome.textContent = "In the score"
+          intent.textContent = "MuseScore wrote " + executed + " command" + (executed === 1 ? "" : "s") + "."
+        }
+        watching = null
+      }
+    }
+
+    async function refresh() {
+      try {
+        const response = await fetch("/status")
+        renderStatus(await response.json())
+      } catch (error) {
+        document.getElementById("conn").textContent = "Desk offline"
+      }
+    }
+
+    refresh()
+    setInterval(refresh, 2000)
+  </script>
+</body>
+</html>

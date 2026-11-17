@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
-LLM Bridge Main Server
-Integrates all components: HTTP bridge, LLM interpreter, music logic, and validator
+LLM Bridge.
+
+The MuseScore plugin and the desk page both talk to this process.
+With an API key, a model interprets the sentence. Without one, the
+local theory engine handles the common requests.
 """
 
 import asyncio
@@ -9,339 +12,411 @@ import json
 import logging
 import os
 import sys
-from typing import Optional, Dict, List
 from pathlib import Path
+from typing import Dict, List, Optional
 
-from bridge_server import MuseScoreBridge, AtomicCommand
-from llm_interpreter import LLMInterpreter, interpreter
-from music_logic import MusicGenerator
-from validator import CommandValidator
+from bridge_server import AtomicCommand, MuseScoreBridge
+from llm_interpreter import LLMInterpreter
+from local_interpreter import interpret_locally
+from music_logic import MusicGenerator, describe_command, key_signature_name
+from validator import CommandValidator, order_commands
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
+PLACEHOLDER_KEYS = {
+    "",
+    "YOUR_API_KEY_HERE",
+    "your-api-key",
+    "sk-ant-...",
+    "AIza...",
+    "sk-...",
+}
+
+
+def usable_api_key(value: Optional[str]) -> str:
+    if not value or not isinstance(value, str):
+        return ""
+    stripped = value.strip()
+    if stripped in PLACEHOLDER_KEYS or stripped.startswith("YOUR_"):
+        return ""
+    return stripped
+
 
 class LLMBridgeServer:
-    """Main server that orchestrates everything"""
-
-    def __init__(self):
-        self.bridge = MuseScoreBridge(port=8766)
-        self.interpreter = interpreter
-        self.validator: Optional[CommandValidator] = None
-        self.generator: Optional[MusicGenerator] = None
-
-        # Load config
+    def __init__(self, host: str = "localhost", port: int = 8766):
+        self.bridge = MuseScoreBridge(host=host, port=port)
+        self.interpreter = LLMInterpreter()
         self.config = self._load_config()
+        self.bridge.on_request = self.handle_request
+        self.bridge.on_music = self.handle_music
+        self.bridge.llm_status = self.llm_status
 
     def _load_config(self) -> Dict:
-        """Load configuration from file or environment"""
-        config_path = Path(__file__).parent / "config.json"
         config = {
             "provider": os.environ.get("LLM_PROVIDER", "claude"),
             "api_key": os.environ.get("LLM_API_KEY", ""),
             "model": os.environ.get("LLM_MODEL", ""),
         }
-
+        config_path = Path(__file__).parent / "config.json"
         if config_path.exists():
-            with open(config_path) as f:
-                file_config = json.load(f)
-                config.update(file_config)
-
+            with open(config_path) as handle:
+                config.update(json.load(handle))
+        config["api_key"] = usable_api_key(config.get("api_key"))
         return config
 
     def configure_llm(self, provider: str, api_key: str, model: str = None):
-        """Configure the LLM provider"""
-        self.interpreter.set_provider(provider, api_key, model)
-        logger.info(f"LLM configured: {provider}")
+        self.interpreter.set_provider(provider, api_key, model or None)
+        logger.info("Model configured: %s", provider)
 
-    async def process_request(self, user_request: str) -> Dict:
-        """
-        Process a natural language request
-
-        Args:
-            user_request: User's natural language request
-
-        Returns:
-            Result dictionary with status and details
-        """
-        result = {
-            "success": False,
-            "intent": "",
-            "commands_sent": 0,
-            "errors": [],
-            "notes": ""
+    def llm_status(self) -> Dict:
+        provider = self.interpreter.provider
+        if not provider:
+            return {
+                "configured": False,
+                "provider": self.config.get("provider") or "",
+                "model": "",
+            }
+        name = type(provider).__name__.replace("Provider", "").lower()
+        return {
+            "configured": True,
+            "provider": name,
+            "model": getattr(provider, "model", "") or "",
         }
 
+    def score_context(self) -> Optional[Dict]:
+        info = self.bridge.score_info
+        if not info:
+            return None
+        return {
+            "title": info.title,
+            "measures": info.measures,
+            "staves": info.staves,
+            "time_signature": info.time_signature,
+            "key_signature": info.key_signature,
+            "parts": info.parts,
+        }
+
+    def time_signature(self):
+        context = self.score_context() or {}
+        signature = context.get("time_signature") or {}
+        return (
+            int(signature.get("numerator") or 4),
+            int(signature.get("denominator") or 4),
+        )
+
+    def _generator(self) -> MusicGenerator:
+        context = self.score_context() or {}
+        fifths = context.get("key_signature")
+        key_name = key_signature_name(fifths) if isinstance(fifths, int) else "C"
+        return MusicGenerator(key_name, self.time_signature())
+
+    async def handle_request(self, text: str) -> Dict:
+        # The plugin is waiting on this HTTP call, so do not also wait for it
+        # to poll and answer. The desk watches /status for the confirmation.
+        return await self.process_request(text, wait_for_plugin=False)
+
+    async def handle_music(self, action: str, params: Dict) -> Dict:
+        return await self.process_music_logic(action, params, wait_for_plugin=False)
+
+    async def process_request(self, user_request: str, wait_for_plugin: Optional[bool] = None) -> Dict:
+        context = self.score_context()
+        source = "local"
+        notes = ""
+        intent = ""
+        commands: List[dict] = []
+
+        if self.interpreter.provider:
+            try:
+                response = await self.interpreter.interpret(user_request, context or {})
+                source = "llm"
+                intent = response.intent
+                notes = response.notes or ""
+                commands = list(response.commands or [])
+                if not commands:
+                    local = interpret_locally(user_request, context)
+                    if local.commands:
+                        commands = local.commands
+                        intent = local.intent or intent
+                        source = "local"
+                        notes = (notes + " The model returned no commands, so the local theory engine wrote them.").strip()
+            except Exception as exc:
+                logger.exception("Model request failed")
+                local = interpret_locally(user_request, context)
+                commands = local.commands
+                intent = local.intent
+                source = "local"
+                notes = f"The model did not answer ({exc}). {local.notes}".strip()
+        else:
+            local = interpret_locally(user_request, context)
+            commands = local.commands
+            intent = local.intent
+            notes = local.notes
+
+        return await self._dispatch(
+            commands,
+            intent=intent,
+            notes=notes,
+            source=source,
+            wait_for_plugin=wait_for_plugin,
+        )
+
+    async def process_music_logic(self, action: str, params: Dict, wait_for_plugin: Optional[bool] = None) -> Dict:
+        generator = self._generator()
+        track = int(params.get("track") or 0)
         try:
-            # Get current score context
-            score_context = None
-            if self.bridge.score_info:
-                score_context = {
-                    "title": self.bridge.score_info.title,
-                    "measures": self.bridge.score_info.measures,
-                    "staves": self.bridge.score_info.staves,
-                    "time_signature": self.bridge.score_info.time_signature,
-                    "key_signature": self.bridge.score_info.key_signature,
-                    "parts": self.bridge.score_info.parts
-                }
+            measures = max(1, min(int(params.get("measures") or 4), 256))
+        except (TypeError, ValueError):
+            measures = 4
 
-            # Interpret the request via LLM
-            llm_response = await self.interpreter.interpret(user_request, score_context)
-            result["intent"] = llm_response.intent
-            result["notes"] = llm_response.notes
+        if action == "walking_bass":
+            chords = params.get("chords") or []
+            if isinstance(chords, str):
+                chords = chords.split()
+            chords = [str(chord).strip() for chord in chords if str(chord).strip()]
+            if not chords:
+                return self._empty_result("Walking bass", "Name the chords, for example G C D G.")
+            try:
+                commands = generator.walking_bass_line(chords, measures, track=track)
+            except ValueError as exc:
+                return self._empty_result("Walking bass", str(exc))
+            intent = f"Walking bass on {' '.join(chords)} for {measures} bars"
+            notes = "One chord tone per beat, walking into the next chord."
+        elif action == "drum_pattern":
+            style = str(params.get("style") or "rock").lower()
+            if style not in ("rock", "jazz", "pop", "latin", "metal"):
+                return self._empty_result("Drums", "Style must be rock, jazz, pop, latin, or metal.")
+            commands = generator.drum_pattern(style, measures, track=track)
+            intent = f"{style.capitalize()} drums for {measures} bars"
+            notes = "Hits on the same beat are written together."
+            if generator.time_sig != (4, 4):
+                notes += " These patterns are written in 4/4."
+        else:
+            return self._empty_result(action or "Music", f"Unknown action: {action}")
 
-            if not llm_response.commands:
+        return await self._dispatch(
+            commands,
+            intent=intent,
+            notes=notes,
+            source="local",
+            wait_for_plugin=wait_for_plugin,
+        )
+
+    def _empty_result(self, intent: str, note: str) -> Dict:
+        return {
+            "success": False,
+            "status": "invalid",
+            "intent": intent,
+            "notes": note,
+            "source": "local",
+            "commands_sent": 0,
+            "commands": [],
+            "preview": [],
+            "errors": [note],
+            "warnings": [],
+            "batch_id": None,
+        }
+
+    async def _dispatch(
+        self,
+        commands: List[dict],
+        intent: str,
+        notes: str,
+        source: str,
+        errors: Optional[List[str]] = None,
+        wait_for_plugin: Optional[bool] = None,
+    ) -> Dict:
+        result = {
+            "success": False,
+            "status": "invalid",
+            "intent": intent,
+            "notes": notes,
+            "source": source,
+            "commands_sent": 0,
+            "commands": [],
+            "preview": [],
+            "errors": list(errors or []),
+            "warnings": [],
+            "batch_id": None,
+        }
+        if not commands:
+            if not result["errors"]:
                 result["errors"].append("No commands generated")
-                return result
+            return result
 
-            # Validate commands
-            if score_context:
-                self.validator = CommandValidator(score_context)
-            else:
-                self.validator = CommandValidator()
+        context = self.score_context()
+        if context:
+            validator = CommandValidator(context)
+        else:
+            validator = CommandValidator({"measures": 1000, "staves": 0})
+        valid, validation_errors = validator.validate_commands(commands)
+        result["errors"].extend(validation_errors)
+        result["warnings"].extend(validator.last_warnings)
+        if not valid:
+            result["errors"].append("No valid commands after validation")
+            return result
 
-            valid_commands, validation_errors = self.validator.validate_commands(llm_response.commands)
-            result["errors"].extend(validation_errors)
+        valid = order_commands(valid)
+        signature = self.time_signature()
+        result["commands"] = valid
+        result["preview"] = [describe_command(command, signature) for command in valid]
 
-            if not valid_commands:
-                result["errors"].append("No valid commands after validation")
-                return result
+        should_wait = self.bridge.plugin_connected() if wait_for_plugin is None else wait_for_plugin
+        delivery = await self.bridge.send_commands(
+            [AtomicCommand(command["type"], command) for command in valid],
+            wait=should_wait,
+        )
+        result["commands_sent"] = len(valid)
+        result["batch_id"] = delivery.batch_id
 
-            # Send commands to MuseScore
-            commands = [AtomicCommand(cmd["type"], cmd) for cmd in valid_commands]
-            success = await self.bridge.send_commands(commands)
-
-            if success:
-                result["success"] = True
-                result["commands_sent"] = len(valid_commands)
-            else:
-                result["errors"].append("Failed to send commands to MuseScore")
-
-        except Exception as e:
-            logger.exception("Error processing request")
-            result["errors"].append(str(e))
-
-        return result
-
-    async def process_music_logic(self, action: str, params: Dict) -> Dict:
-        """
-        Process using Music21 logic instead of LLM
-
-        Args:
-            action: Action type (walking_bass, drum_pattern, etc.)
-            params: Action parameters
-
-        Returns:
-            Result dictionary
-        """
-        result = {"success": False, "errors": [], "commands_sent": 0}
-
-        try:
-            # Initialize generator with current score context
-            time_sig = (4, 4)
-            key = "C"
-
-            if self.bridge.score_info:
-                if self.bridge.score_info.time_signature:
-                    time_sig = (
-                        self.bridge.score_info.time_signature.get("numerator", 4),
-                        self.bridge.score_info.time_signature.get("denominator", 4)
-                    )
-                if self.bridge.score_info.key_signature is not None:
-                    # Convert key signature number to key name
-                    key_map = {
-                        -7: "Cb", -6: "Gb", -5: "Db", -4: "Ab", -3: "Eb", -2: "Bb", -1: "F",
-                        0: "C", 1: "G", 2: "D", 3: "A", 4: "E", 5: "B", 6: "F#", 7: "C#"
-                    }
-                    key = key_map.get(self.bridge.score_info.key_signature, "C")
-
-            self.generator = MusicGenerator(key_signature=key, time_signature=time_sig)
-
-            # Generate commands based on action
-            commands = []
-
-            if action == "walking_bass":
-                chords = params.get("chords", ["C", "F", "G", "C"])
-                measures = params.get("measures", 4)
-                commands = self.generator.walking_bass_line(chords, measures)
-
-            elif action == "drum_pattern":
-                style = params.get("style", "rock")
-                measures = params.get("measures", 4)
-                commands = self.generator.drum_pattern(style, measures)
-
-            else:
-                result["errors"].append(f"Unknown action: {action}")
-                return result
-
-            # Validate and send
-            self.validator = CommandValidator(
-                {"measures": self.bridge.score_info.measures if self.bridge.score_info else 100}
-            )
-            valid_commands, errors = self.validator.validate_commands(commands)
-            result["errors"].extend(errors)
-
-            if valid_commands:
-                atomic_commands = [AtomicCommand(cmd["type"], cmd) for cmd in valid_commands]
-                success = await self.bridge.send_commands(atomic_commands)
-                if success:
-                    result["success"] = True
-                    result["commands_sent"] = len(valid_commands)
-
-        except Exception as e:
-            logger.exception("Error in music logic")
-            result["errors"].append(str(e))
-
+        if should_wait and delivery.confirmed and delivery.failed == 0:
+            result["success"] = True
+            result["status"] = "applied"
+        elif should_wait and delivery.confirmed:
+            result["success"] = False
+            result["status"] = "failed"
+            result["errors"].extend(delivery.errors or ["MuseScore reported a problem."])
+        elif should_wait:
+            result["success"] = False
+            result["status"] = "unconfirmed"
+            result["errors"].append("The plugin did not confirm. Leave LLM Bridge open and connected in MuseScore.")
+        else:
+            result["success"] = True
+            result["status"] = "queued"
         return result
 
     async def run_cli(self):
-        """Run interactive CLI"""
-        print("\n" + "=" * 60)
-        print("LLM Bridge Server - Interactive Mode")
-        print("=" * 60)
-        print("\nCommands:")
-        print("  <text>     - Send natural language request to LLM")
-        print("  /bass      - Generate walking bass (Music21)")
-        print("  /drums     - Generate drum pattern (Music21)")
-        print("  /info      - Show current score info")
-        print("  /ping      - Check plugin connection status")
-        print("  /quit      - Exit")
-        print("\n")
-
+        self._print_banner(interactive=True)
         while True:
             try:
-                user_input = input(">>> ").strip()
+                user_input = (await asyncio.to_thread(input, ">>> ")).strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\nGoodbye!")
+                break
 
-                if not user_input:
-                    continue
-
+            if not user_input:
+                continue
+            try:
                 if user_input == "/quit":
                     print("Goodbye!")
                     break
-
-                elif user_input == "/info":
-                    if self.bridge.score_info:
-                        print(f"Score: {self.bridge.score_info.title}")
-                        print(f"  Measures: {self.bridge.score_info.measures}")
-                        print(f"  Staves: {self.bridge.score_info.staves}")
-                        print(f"  Time: {self.bridge.score_info.time_signature}")
-                    else:
-                        print("No score info available")
-
-                elif user_input == "/ping":
-                    if self.bridge.state.value == "connected":
+                if user_input == "/info":
+                    self._print_score()
+                    continue
+                if user_input == "/ping":
+                    if self.bridge.plugin_connected():
                         print("Plugin connected")
                     else:
-                        print("Plugin not connected - waiting for plugin to call /ping endpoint")
-
-                elif user_input == "/bass":
-                    chords = input("Chords (e.g., G C D G): ").strip().split()
-                    measures = int(input("Measures: ").strip() or "4")
+                        print("Plugin not connected. In MuseScore: Plugins → LLM Bridge → Connect.")
+                    continue
+                if user_input == "/bass":
+                    chords = (await asyncio.to_thread(input, "Chords (e.g., G C D G): ")).strip().split()
+                    measures_text = (await asyncio.to_thread(input, "Measures: ")).strip() or "4"
                     result = await self.process_music_logic("walking_bass", {
                         "chords": chords,
-                        "measures": measures
+                        "measures": int(measures_text),
                     })
-                    print(f"Result: {result}")
-
-                elif user_input == "/drums":
-                    style = input("Style (rock/jazz/pop/latin/metal): ").strip() or "rock"
-                    measures = int(input("Measures: ").strip() or "4")
+                    self._print_result(result)
+                    continue
+                if user_input == "/drums":
+                    style = (await asyncio.to_thread(input, "Style (rock/jazz/pop/latin/metal): ")).strip() or "rock"
+                    measures_text = (await asyncio.to_thread(input, "Measures: ")).strip() or "4"
                     result = await self.process_music_logic("drum_pattern", {
                         "style": style,
-                        "measures": measures
+                        "measures": int(measures_text),
                     })
-                    print(f"Result: {result}")
+                    self._print_result(result)
+                    continue
 
-                else:
-                    # Natural language request
-                    print("Processing...")
-                    result = await self.process_request(user_input)
-                    print(f"\nIntent: {result['intent']}")
-                    print(f"Commands sent: {result['commands_sent']}")
-                    if result['errors']:
-                        print(f"Errors: {result['errors']}")
-                    if result['notes']:
-                        print(f"Notes: {result['notes']}")
-                    print()
+                result = await self.process_request(user_input)
+                self._print_result(result)
+            except (EOFError, KeyboardInterrupt):
+                print("\nGoodbye!")
+                break
+            except Exception as exc:
+                print(f"Error: {exc}")
 
-            except KeyboardInterrupt:
-                print("\nUse /quit to exit")
-            except Exception as e:
-                print(f"Error: {e}")
-
-    async def start(self):
-        """Start the server"""
-        # Configure LLM if API key is available
-        if self.config.get("api_key"):
-            self.configure_llm(
-                self.config.get("provider", "claude"),
-                self.config["api_key"],
-                self.config.get("model")
-            )
+    def _print_banner(self, interactive: bool):
+        status = self.llm_status()
+        if status["configured"]:
+            model_line = f"Model:   {status['provider']} · {status['model']}"
         else:
-            logger.warning("No API key configured. Set LLM_API_KEY environment variable.")
+            model_line = "Theory:  local engine (no API key)"
+        print("\n" + "=" * 60)
+        print("LLM Bridge" + ("  ·  interactive" if interactive else "  ·  headless"))
+        print("=" * 60)
+        print(f"Desk:    http://localhost:{self.bridge.port}")
+        print("Plugin:  Plugins → LLM Bridge → Connect")
+        print(model_line)
+        if interactive:
+            print("\nType a request, or /bass  /drums  /info  /ping  /quit\n")
+        else:
+            print("\nLeave this running. Press Ctrl+C to stop.\n")
 
-        # Start HTTP server in background
-        server_task = asyncio.create_task(self.bridge.start_server())
+    def _print_score(self):
+        info = self.bridge.score_info
+        if not info:
+            print("No score yet. Connect the plugin with a score open.")
+            return
+        print(f"Score: {info.title or 'Untitled'}")
+        print(f"  Bars: {info.measures}    Staves: {info.staves}")
+        print(f"  Time: {info.time_signature}")
+        if info.key_signature is not None:
+            print(f"  Key:  {key_signature_name(info.key_signature)} ({info.key_signature} fifths)")
 
-        # Wait a moment for server to start
-        await asyncio.sleep(0.5)
-        print(f"\nHTTP server running on http://localhost:8766")
-        print("Waiting for MuseScore plugin to connect...")
-
-        # Run CLI
-        await self.run_cli()
-
-        # Cleanup
-        server_task.cancel()
-
-
-async def run_headless(server: LLMBridgeServer):
-    """Run in headless mode (no CLI, just HTTP server)"""
-    print("\n" + "=" * 60)
-    print("LLM Bridge Server - Headless Mode")
-    print("=" * 60)
-    print(f"\nHTTP server running on http://localhost:8766")
-    print("Waiting for MuseScore plugin to connect...")
-    print("\nEndpoints: /ping, /poll, /score_info, /results")
-    print("Press Ctrl+C to stop.\n")
-
-    # Just keep running
-    await asyncio.Future()
+    def _print_result(self, result: Dict):
+        print(f"\n{result.get('intent') or 'Request'}")
+        print(f"Source: {result.get('source')}    Status: {result.get('status')}")
+        for line in result.get("preview") or []:
+            print(f"  {line}")
+        if result.get("notes"):
+            print(result["notes"])
+        for warning in result.get("warnings") or []:
+            print(f"Warning: {warning}")
+        for error in result.get("errors") or []:
+            print(f"Error: {error}")
+        print()
 
 
-async def main(headless: bool = False):
-    """Main entry point"""
-    server = LLMBridgeServer()
-
-    # Configure LLM if API key is available
+async def main(headless: bool = False, host: str = "localhost", port: int = 8766):
+    server = LLMBridgeServer(host=host, port=port)
     if server.config.get("api_key"):
-        server.configure_llm(
-            server.config.get("provider", "claude"),
-            server.config["api_key"],
-            server.config.get("model")
-        )
-
-    # Start HTTP server
-    server_task = asyncio.create_task(server.bridge.start_server())
-    await asyncio.sleep(0.5)
-
-    if headless:
-        await run_headless(server)
+        try:
+            server.configure_llm(
+                server.config.get("provider", "claude"),
+                server.config["api_key"],
+                server.config.get("model") or None,
+            )
+        except Exception as exc:
+            logger.error("Could not configure the model (%s). Using the local theory engine.", exc)
     else:
-        await server.run_cli()
+        logger.warning("No API key configured. Common requests use the local theory engine.")
 
-    server_task.cancel()
+    server_task = asyncio.create_task(server.bridge.start_server())
+    for _ in range(50):
+        if server.bridge._tcp is not None:
+            break
+        await asyncio.sleep(0.02)
+
+    try:
+        if headless:
+            server._print_banner(interactive=False)
+            await asyncio.Future()
+        else:
+            await server.run_cli()
+    finally:
+        server_task.cancel()
+        try:
+            await server_task
+        except asyncio.CancelledError:
+            pass
 
 
 if __name__ == "__main__":
-    import sys
     headless = "--headless" in sys.argv or "-H" in sys.argv
-
     try:
         asyncio.run(main(headless=headless))
     except KeyboardInterrupt:

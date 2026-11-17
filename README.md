@@ -1,200 +1,103 @@
 # MuseScore LLM Bridge
 
-AI-powered music arrangement for MuseScore using the "Bridge" architecture.
-
-## Architecture
+Write musical changes into an open MuseScore score. Type the change in the score plugin or in the desk at `http://localhost:8766`.
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│   MuseScore     │────▶│  Python Server   │────▶│      LLM        │
-│   QML Plugin    │◀────│   (Middleware)   │◀────│ (Claude/Gemini) │
-│   "The Ear"     │     │   "The Brain"    │     │                 │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-     WebSocket              Music21                   API
+┌─────────────────┐     HTTP poll      ┌──────────────────┐
+│   MuseScore     │◀──────────────────▶│  Python server   │
+│   QML plugin    │   notes, chords,   │  theory or LLM   │
+└─────────────────┘   tempo, drums     └──────────────────┘
 ```
 
-### Components
+With an API key, Claude, Gemini, or OpenAI reads the sentence. Without one, a local theory engine handles the requests below.
 
-1. **The Ear** (MuseScore Plugin)
-   - QML plugin that listens for commands via WebSocket
-   - Executes atomic commands on the score
-   - Reports score state back to server
-
-2. **The Brain** (Python Middleware)
-   - Receives natural language requests
-   - Uses LLM to interpret intent
-   - Uses Music21 for musical calculations
-   - Validates commands before sending
-   - Sends atomic commands to plugin
-
-3. **The Translator** (LLM)
-   - Interprets natural language requests
-   - Generates structured commands
-   - Understands musical concepts
-
-## Installation
-
-### 1. Install Python Server
+## Install
 
 ```bash
-cd MusicArrangements
 pip install -r requirements.txt
-
-# Copy and edit config
-cp server/config.example.json server/config.json
-# Edit config.json with your API key
+cp server/config.example.json server/config.json   # optional, for a model key
 ```
 
-### 2. Install MuseScore Plugin
+Copy `plugin/LLMBridge.qml` into the MuseScore 4 plugins folder:
 
-Copy `plugin/LLMBridge.qml` to your MuseScore plugins folder:
+- Windows: `%HOMEPATH%\Documents\MuseScore4\Plugins\`
+- macOS and Linux: `~/Documents/MuseScore4/Plugins/`
 
-- **Windows**: `%HOMEPATH%\Documents\MuseScore4\Plugins\`
-- **macOS**: `~/Documents/MuseScore4/Plugins/`
-- **Linux**: `~/Documents/MuseScore4/Plugins/`
+Enable it in Plugins → Plugin Manager.
 
-Enable in MuseScore: Plugins → Plugin Manager → LLM Bridge
+A model key is optional. Set `LLM_API_KEY` and `LLM_PROVIDER` (`claude`, `gemini`, or `openai`), or put them in `server/config.json`. `server/config.json` is gitignored. The placeholder in the example file is not sent to a provider.
 
-### 3. Configure API Key
-
-Set environment variable:
-```bash
-export LLM_API_KEY="your-api-key"
-export LLM_PROVIDER="claude"  # or "gemini" or "openai"
-```
-
-Or edit `server/config.json`:
-```json
-{
-    "provider": "claude",
-    "api_key": "sk-ant-...",
-    "model": "claude-sonnet-4-20250514"
-}
-```
-
-## Usage
-
-### 1. Start the Server
+## Use
 
 ```bash
-cd MusicArrangements/server
-python main.py
+cd server
+python main.py --headless
 ```
 
-### 2. Connect MuseScore
+Open `http://localhost:8766`. In MuseScore, open a score, run Plugins → LLM Bridge, and press Connect. The desk shows the score title, time signature, and key once the plugin has reported them.
 
-1. Open MuseScore
-2. Open a score
-3. Launch plugin: Plugins → LLM Bridge
-4. Click "Connect to Server"
+Requests that work with no API key:
 
-### 3. Send Commands
+- `Add a C major chord at the beginning`
+- `Add an F#3 half note in measure 2`
+- `Add a forte in measure 1`
+- `Set the tempo to 96`
+- `Transpose up a perfect fifth`
+- `Walking bass G C D G for 4 measures`
+- `Rock drums for 4 measures` (also jazz, pop, latin, metal)
 
-In the server terminal:
-```
->>> Add a C major chord at the beginning
->>> Add walking bass in G major
->>> Transpose up a perfect fifth
->>> Add rock drum pattern for 4 measures
-```
+Bar numbers in those sentences start at 1. The same box accepts a freer sentence when a model is configured. If the model returns nothing usable, the local engine tries the sentence too.
 
-Or use built-in music logic:
-```
->>> /bass
-Chords (e.g., G C D G): G C D G
-Measures: 4
+The plugin can send the same sentences. Its log shows the intent, and the notes land in the score as one undo step.
 
->>> /drums
-Style (rock/jazz/pop/latin/metal): jazz
-Measures: 8
-```
+`python main.py` without `--headless` keeps a terminal prompt (`/bass`, `/drums`, `/info`, `/ping`, `/quit`) and still serves the desk. Typing at the prompt does not freeze the plugin connection.
 
-## Atomic Commands
+## What gets written
 
-The system uses these atomic commands:
+Notes are placed by tick inside the bar. A quarter note is 480 ticks, so 4/4 beats are 0, 480, 960, and 1440. The plugin converts those ticks to a real note length (`1/4`, not 480 whole notes).
 
-| Command | Description | Parameters |
-|---------|-------------|------------|
-| `add_note` | Add single note | pitch, duration, measure, track |
-| `add_chord` | Add chord | pitches[], duration, measure, track |
-| `add_rest` | Add rest | duration, measure, track |
-| `add_dynamic` | Add dynamic | dynamic (pp/p/mp/mf/f/ff), measure |
-| `add_tempo` | Add tempo | bpm, measure, text |
-| `add_text` | Add text | text, measure, textType |
-| `transpose` | Transpose | semitones |
+Walking bass plays one chord tone per beat and steps chromatically into the next chord. `Gmaj` is major; `Gm` is minor. Drum hits that share a beat are written together, and each bar is filled in time. Patterns are in 4/4.
 
-## MIDI Pitch Reference
+Transpose moves every note in the score, including a drum staff. Undo if the kit should stay put.
 
-```
-C4 (middle C) = 60
-D4 = 62, E4 = 64, F4 = 65, G4 = 67, A4 = 69, B4 = 71
-C5 = 72, C3 = 48, C2 = 36 (bass)
+| Command | Role |
+| --- | --- |
+| `add_note` | One pitch, duration, measure, tick, track |
+| `add_chord` | Several pitches at one tick |
+| `add_rest` | A rest, used to reach a later beat |
+| `add_dynamic` | `pp` through `ff`, plus `sfz` |
+| `add_tempo` | BPM at a bar |
+| `add_text` | Staff or system text |
+| `transpose` | Semitones, positive or negative |
+
+MIDI 60 is C4. Track 0 is the first voice of the first staff.
+
+## Tests
+
+```bash
+python -m unittest discover -s tests
 ```
 
-## Duration Reference (ticks)
+## Layout
 
 ```
-Whole = 1920
-Half = 960
-Quarter = 480
-Eighth = 240
-16th = 120
-```
-
-## Supported LLM Providers
-
-| Provider | Models | API Key Format |
-|----------|--------|----------------|
-| Claude | claude-sonnet-4-20250514, claude-3-5-sonnet | sk-ant-... |
-| Gemini | gemini-2.0-flash, gemini-1.5-pro | AIza... |
-| OpenAI | gpt-4o, gpt-4-turbo | sk-... |
-
-## Project Structure
-
-```
-MusicArrangements/
-├── plugin/
-│   └── LLMBridge.qml      # MuseScore plugin
-├── server/
-│   ├── main.py            # Main server entry point
-│   ├── bridge_server.py   # WebSocket bridge
-│   ├── llm_interpreter.py # LLM integration
-│   ├── music_logic.py     # Music21 calculations
-│   ├── validator.py       # Command validation
-│   └── config.json        # Configuration
-├── schemas/               # Command schemas
-├── requirements.txt
-└── README.md
+plugin/LLMBridge.qml     MuseScore dialog
+server/main.py           Startup, CLI, request handling
+server/bridge_server.py  HTTP desk, poll, and results
+server/console.html      Desk page
+server/local_interpreter.py
+server/music_logic.py
+server/validator.py
+server/llm_interpreter.py
+server/durations.py      Tick values shared with the plugin
 ```
 
 ## Troubleshooting
 
-### Plugin shows "Disconnected"
-- Ensure Python server is running (`python main.py`)
-- Check that port 8766 is not blocked
+The desk says the plugin is not connected: start `python main.py`, then press Connect in the plugin. The server listens on port 8766.
 
-### LLM errors
-- Verify API key is correct
-- Check provider name matches key type
-- Try a different model
+A request stays queued: the plugin dialog has to stay open. It picks up commands several times a second.
 
-### Commands not executing
-- Check MuseScore console for errors
-- Verify score is open
-- Check command validation errors in server output
+The model is not used: `LLM_API_KEY` is empty or still the example placeholder. The local engine answers instead.
 
-## Development
-
-### Adding New Commands
-
-1. Add command handler in `plugin/LLMBridge.qml`
-2. Add command schema in `server/llm_interpreter.py`
-3. Add validation in `server/validator.py`
-
-### Adding Music Logic
-
-Add functions to `server/music_logic.py` using Music21.
-
-## License
-
-MIT License
+A bar looks too full: the desk lists a warning when the written ticks run past the time signature. Drum patterns assume 4/4.
